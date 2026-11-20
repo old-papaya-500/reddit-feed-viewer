@@ -1,0 +1,22 @@
+# Datasets y archivos generados por los scrapers
+resultados/
+descargas/
+*.json
+*.csv
+
+# Reportes Markdown generados por buscar.js (preservar documentación del proyecto)
+*_posts.md
+*_202*.md
+
+# Checkpoints y temporales
+.*_checkpoint.json
+*.log
+*.tmp
+
+# Sistema operativo / Editores
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+node_modules/

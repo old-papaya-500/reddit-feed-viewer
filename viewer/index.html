@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Reddit Feed Viewer</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- ================================================================= -->
+  <!-- HEADER - siempre visible                                           -->
+  <!-- ================================================================= -->
+  <header class="app-header">
+    <div class="brand">
+      <div class="brand-icon">🗂️</div>
+      <div>
+        <h1>Reddit Feed Viewer</h1>
+        <p class="subtitle">Visor Offline de Comunidades, Publicaciones e Hilos</p>
+      </div>
+    </div>
+
+    <!-- Controles principales -->
+    <div class="header-right">
+
+      <label class="btn btn-secondary file-upload-btn" title="Cargar perfiles_usuarios.json">
+        <span>📂 Cargar JSON</span>
+        <input type="file" id="fileInput" accept=".json" hidden>
+      </label>
+
+      <button
+        type="button"
+        id="clearMemoryBtn"
+        class="btn btn-secondary clear-memory-btn"
+        title="Vaciar todos los datos cargados en memoria RAM"
+        disabled
+      >
+        <span>🗑️ Vaciar</span>
+      </button>
+
+      <button
+        type="button"
+        id="offlineToggle"
+        class="btn btn-secondary offline-toggle-btn"
+        aria-pressed="false"
+        title="Modo Offline Estricto: evita cualquier conexión externa a Internet (sin consultas a Arctic Shift ni carga automática de multimedia remoto)"
+      >
+        <span id="offlineIcon" aria-hidden="true">🌐</span>
+        <span id="offlineLabel">Offline: OFF</span>
+      </button>
+
+      <select id="stylePresetSelect" class="style-preset-select" title="Cambiar paleta de colores y tipografía" aria-label="Estilo visual">
+        <option value="default">🎨 Original</option>
+        <option value="editorial">📰 Editorial</option>
+        <option value="osint">💻 OSINT</option>
+        <option value="nordic">❄️ Nordic</option>
+      </select>
+
+      <button type="button" id="themeToggle" class="btn btn-icon" title="Cambiar tema claro/oscuro">
+        <span id="themeIcon">🌓</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Banner de estado -->
+  <div id="statusBanner" class="status-banner">
+    <div class="status-content">
+      <span id="statusText">Esperando archivo de datos...</span>
+      <span id="statusMeta" class="status-meta"></span>
+    </div>
+  </div>
+
+  <main class="app-main">
+
+    <!-- ================================================================= -->
+    <!-- SECCIÓN 1: FEED BUILDER                                           -->
+    <!-- ================================================================= -->
+    <section id="sectionFeed" class="section-view active" aria-label="Armador de Feed">
+      <div class="feed-layout">
+
+        <!-- Panel lateral izquierdo: controles del feed -->
+        <aside class="feed-sidebar" aria-label="Configuración del feed">
+          <div class="feed-sidebar-inner">
+
+            <div class="sidebar-block">
+              <h3 class="sidebar-block-title">🗂️ Armar Feed</h3>
+              <p class="sidebar-block-desc">Elegí qué comunidades, fechas o palabras clave mostrar. El feed despliega las publicaciones (posts) y reconstruye su árbol de comentarios al ingresar a cada una.</p>
+            </div>
+
+            <!-- Buscador de Posts por Título -->
+            <div class="sidebar-block">
+              <search>
+                <label for="feedTitleSearch" class="sidebar-block-label">Buscar por título</label>
+                <div class="title-search-wrap">
+                  <input
+                    type="search"
+                    id="feedTitleSearch"
+                    class="date-input"
+                    placeholder="Ej: alquiler, dólar, boca..."
+                    autocomplete="off"
+                    autocorrect="off"
+                    autocapitalize="none"
+                    spellcheck="false"
+                    enterkeyhint="search"
+                  >
+                  <button type="button" id="clearTitleSearchBtn" class="title-search-clear hidden" aria-label="Limpiar búsqueda de título">✕</button>
+                </div>
+              </search>
+            </div>
+
+            <!-- Subreddits -->
+            <div class="sidebar-block">
+              <div class="sidebar-block-header">
+                <h4 class="sidebar-block-label">Comunidades</h4>
+                <div class="sidebar-block-actions">
+                  <button type="button" id="subsSelectAll" class="link-btn">Todas</button>
+                  <span class="link-btn-sep">·</span>
+                  <button type="button" id="subsSelectNone" class="link-btn">Ninguna</button>
+                </div>
+              </div>
+              <div id="subCheckboxList" class="sub-checkbox-list">
+                <p class="sidebar-empty-hint">Cargá un archivo JSON para ver las comunidades disponibles.</p>
+              </div>
+            </div>
+
+            <!-- Rango de fechas -->
+            <div class="sidebar-block">
+              <h4 class="sidebar-block-label">Rango de fechas</h4>
+              <div class="date-range-fields">
+                <div class="date-field">
+                  <label for="feedDateFrom">Desde</label>
+                  <input type="date" id="feedDateFrom" class="date-input">
+                </div>
+                <div class="date-field">
+                  <label for="feedDateTo">Hasta</label>
+                  <input type="date" id="feedDateTo" class="date-input">
+                </div>
+              </div>
+              <button type="button" id="clearDatesBtn" class="link-btn mt-sm">✕ Limpiar fechas</button>
+            </div>
+
+            <!-- Ordenamiento -->
+            <div class="sidebar-block">
+              <h4 class="sidebar-block-label">Ordenar por</h4>
+              <select id="feedSortSelect" class="sidebar-select">
+                <option value="date_desc" selected>▼ Más recientes primero</option>
+                <option value="date_asc">▲ Más antiguos primero</option>
+                <option value="score_desc">▼ Mayor score</option>
+              </select>
+            </div>
+
+            <!-- Botón aplicar + contador -->
+            <div class="sidebar-block sidebar-apply">
+              <button type="button" id="applyFeedBtn" class="btn btn-primary btn-full">
+                ▶ Generar Feed
+              </button>
+              <div id="feedCounterBadge" class="feed-counter-badge hidden">
+                <span id="feedItemCount">0</span> ítems encontrados
+              </div>
+            </div>
+
+          </div>
+        </aside>
+
+        <!-- Panel derecho: feed resultante -->
+        <div class="feed-main-area">
+          <!-- Estado inicial -->
+          <div id="feedEmptyState" class="feed-empty-state">
+            <div class="feed-empty-icon">🗂️</div>
+            <h2>Armá tu feed personalizado</h2>
+            <p>Elegí las comunidades y el rango de fechas en el panel izquierdo, luego presioná <strong>▶ Generar Feed</strong>.</p>
+            <p class="feed-empty-hint">Si aún no cargaste datos, usá el botón <strong>📂 Cargar JSON</strong> arriba a la derecha.</p>
+          </div>
+
+          <!-- Feed Items -->
+          <div id="feedItemsList" class="timeline-feed hidden">
+            <!-- Renderizado dinámicamente -->
+          </div>
+
+          <!-- Paginación simple -->
+          <div id="feedPagination" class="feed-pagination hidden">
+            <button type="button" id="feedLoadMore" class="btn btn-secondary">Cargar más ítems</button>
+            <span id="feedPaginationInfo" class="feed-pagination-info"></span>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Modal de Detalle (Google Chrome Modern Web: Dialog nativo con light-dismiss closedby="any") -->
+  <dialog id="itemDialog" closedby="any" aria-labelledby="dialogTitle">
+    <div class="dialog-header">
+      <div class="dialog-meta-badges">
+        <span class="badge" id="dialogTypeBadge">Post</span>
+        <span class="badge badge-sub" id="dialogSubBadge">r/argentina</span>
+        <span class="dialog-author-wrap" id="dialogAuthorWrap">
+          por <a href="#" id="dialogAuthorLink" class="author-user-link">u/usuario</a>
+        </span>
+        <span class="dialog-date" id="dialogDate"></span>
+      </div>
+      <button type="button" class="btn-close" id="dialogCloseBtn" aria-label="Cerrar">✕</button>
+    </div>
+
+    <div class="dialog-body">
+      <h3 id="dialogTitle"></h3>
+      <div id="dialogContext" class="dialog-context hidden"></div>
+      <div id="dialogContent" class="dialog-text-content"></div>
+      <div id="dialogMedia" class="dialog-media-container hidden"></div>
+
+      <!-- Sección de Árbol de Comentarios Reconstruido -->
+      <section id="dialogCommentsSection" class="dialog-comments-section">
+        <div class="dialog-comments-header">
+          <h4 id="dialogCommentsTitle">💬 Árbol de Comentarios</h4>
+          <span id="dialogCommentsCountBadge" class="badge">0 comentarios</span>
+        </div>
+        <div id="dialogCommentTree" class="dialog-comment-tree">
+          <!-- Árbol de comentarios renderizado recursivamente -->
+        </div>
+      </section>
+    </div>
+
+    <div class="dialog-footer">
+      <div class="dialog-score-wrap">
+        <span>Score:</span>
+        <strong id="dialogScore">0</strong>
+      </div>
+      <a id="dialogRedditLink" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-primary">
+        Ver en Reddit ↗
+      </a>
+    </div>
+  </dialog>
+
+  <!-- Modal de Loading Global (no bloqueante, con barra de progreso en tiempo real) -->
+  <dialog id="loadingDialog" class="loading-dialog" aria-labelledby="loadingTitle" aria-live="polite">
+    <div class="loading-modal-content">
+      <div class="loading-spinner" aria-hidden="true"></div>
+      <h3 id="loadingTitle">Procesando...</h3>
+      <p id="loadingDetail" class="loading-detail">Por favor esperá un instante...</p>
+      <div class="loading-progress-track">
+        <div id="loadingProgressBar" class="loading-progress-fill indeterminate"></div>
+      </div>
+      <span id="loadingPercent" class="loading-percent"></span>
+    </div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
