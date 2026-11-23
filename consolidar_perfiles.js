@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // consolidar_perfiles.js - Protocolo de Consolidación de Perfiles de Usuario e Historial Cronológico
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const readline = require('readline');
 
 const ART_OFFSET_HOURS = -3; // UTC-3
+const NUM_BUCKETS = 32; // Particiones temporales en disco para escalar a millones de registros con baja RAM
 
 function parseArtToUnix(dateStr, isEndOfDay = false) {
   const parts = dateStr.trim().split('-');
@@ -72,6 +74,15 @@ function ask(rl, promptText, defaultValue = '') {
   });
 }
 
+async function askValidated(rl, promptText, defaultValue, validator, errorMsg) {
+  while (true) {
+    const raw = await ask(rl, promptText, defaultValue);
+    const parsed = validator(raw);
+    if (parsed !== null && parsed !== undefined) return parsed;
+    console.log(`  ❌ Valor inválido ("${raw}"). ${errorMsg}`);
+  }
+}
+
 // Extrae el nombre del subreddit de un post/comentario o su permalink
 function extractSubreddit(item, filePath = '') {
   if (item.subreddit) return item.subreddit.replace(/^r\//i, '');
@@ -86,58 +97,92 @@ function extractSubreddit(item, filePath = '') {
   return '';
 }
 
-// Lector JSON en streaming para archivos que superan el límite de 512 MB de string en V8
-function readJsonArrayStream(filePath) {
+// Hash determinístico FNV-1a (32-bit) para particionar autores en buckets de disco
+function hashBucket(str, numBuckets) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) % numBuckets;
+}
+
+async function writeStreamChunk(ws, chunk) {
+  if (!ws.write(chunk)) {
+    await new Promise(resolve => ws.once('drain', resolve));
+  }
+}
+
+function closeWriteStream(ws) {
   return new Promise((resolve, reject) => {
-    const stream = fs.createReadStream(filePath, { encoding: 'utf-8', highWaterMark: 256 * 1024 });
-    const items = [];
-    let inString = false;
-    let escapeNext = false;
-    const stack = [];
-    let capturing = false;
-    let captureDepth = -1;
-    let chunks = [];
-
-    stream.on('data', chunk => {
-      let sliceStart = capturing ? 0 : -1;
-      for (let i = 0; i < chunk.length; i++) {
-        const ch = chunk[i];
-        if (escapeNext) { escapeNext = false; continue; }
-        if (inString) {
-          if (ch === '\\') escapeNext = true;
-          else if (ch === '"') inString = false;
-          continue;
-        }
-        if (ch === '"') {
-          inString = true;
-        } else if (ch === '{' || ch === '[') {
-          stack.push(ch);
-          if (!capturing && ch === '{' && stack.length === 2 && stack[0] === '[') {
-            capturing = true;
-            captureDepth = 2;
-            chunks = [];
-            sliceStart = i;
-          }
-        } else if (ch === '}' || ch === ']') {
-          if (capturing && ch === '}' && stack.length === captureDepth) {
-            chunks.push(chunk.slice(sliceStart, i + 1));
-            items.push(JSON.parse(chunks.join('')));
-            capturing = false;
-            captureDepth = -1;
-            chunks = [];
-            sliceStart = -1;
-          }
-          stack.pop();
-        }
-      }
-      if (capturing && sliceStart !== -1) {
-        chunks.push(chunk.slice(sliceStart));
-      }
-    });
-
-    stream.on('end', () => resolve(items));
-    stream.on('error', err => reject(err));
+    ws.once('error', reject);
+    ws.end(() => resolve());
   });
+}
+
+// Lector JSON en streaming elemento-por-elemento (O(1) RAM por archivo, soporta archivos >512 MB y multi-GB)
+async function streamJsonArray(filePath, onItem) {
+  const stream = fs.createReadStream(filePath, { encoding: 'utf-8', highWaterMark: 256 * 1024 });
+  let started = false;
+  let inString = false;
+  let escapeNext = false;
+  const stack = [];
+  let capturing = false;
+  let captureDepth = -1;
+  let chunks = [];
+  let count = 0;
+
+  for await (const chunk of stream) {
+    let sliceStart = capturing ? 0 : -1;
+    for (let i = 0; i < chunk.length; i++) {
+      const ch = chunk[i];
+      if (!started) {
+        if (ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n' || ch === '\uFEFF') continue;
+        if (ch !== '[') {
+          stream.destroy();
+          return { isArray: false, count: 0 };
+        }
+        started = true;
+        stack.push('[');
+        continue;
+      }
+
+      if (escapeNext) { escapeNext = false; continue; }
+      if (inString) {
+        if (ch === '\\') escapeNext = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+      } else if (ch === '{' || ch === '[') {
+        stack.push(ch);
+        if (!capturing && ch === '{' && stack.length === 2 && stack[0] === '[') {
+          capturing = true;
+          captureDepth = 2;
+          chunks = [];
+          sliceStart = i;
+        }
+      } else if (ch === '}' || ch === ']') {
+        if (capturing && ch === '}' && stack.length === captureDepth) {
+          chunks.push(chunk.slice(sliceStart, i + 1));
+          const obj = JSON.parse(chunks.join(''));
+          capturing = false;
+          captureDepth = -1;
+          chunks = [];
+          sliceStart = -1;
+          count++;
+          await onItem(obj);
+        }
+        stack.pop();
+      }
+    }
+    if (capturing && sliceStart !== -1) {
+      chunks.push(chunk.slice(sliceStart));
+    }
+  }
+
+  return { isArray: started, count };
 }
 
 function getArtTimestampSlug() {
@@ -167,11 +212,14 @@ function findJsonFiles(dir, maxDepth = 4, currentDepth = 0) {
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name !== 'node_modules' &&
-          entry.name !== '.git' &&
-          entry.name !== 'consolidados' &&
-          entry.name !== 'backups' &&
-          entry.name !== 'viewer' &&
+      const lowerName = entry.name.toLowerCase();
+      if (lowerName !== 'node_modules' &&
+          lowerName !== '.git' &&
+          lowerName !== 'consolidados' &&
+          lowerName !== 'backups' &&
+          lowerName !== 'viewer' &&
+          lowerName !== 'test' &&
+          lowerName !== 'tests' &&
           !entry.name.startsWith('.')) {
         results = results.concat(findJsonFiles(fullPath, maxDepth, currentDepth + 1));
       }
@@ -230,20 +278,68 @@ async function main() {
     console.log('\n¿Cómo deseas procesar los archivos?');
     console.log('  1) Todos los archivos detectados (consolidación total)');
     console.log('  2) Seleccionar archivos específicos');
-    const opc = await ask(rl, 'Opción [1-2]', '1');
+    const opc = await askValidated(
+      rl,
+      'Opción [1-2]',
+      '1',
+      (v) => (['1', '2'].includes(v) ? v : null),
+      'Elegí 1 o 2.'
+    );
 
     if (opc === '2') {
-      const elegidos = await ask(rl, 'Ingresá los números separados por coma (ej: 1,3)');
-      const indices = elegidos.split(',').map(s => parseInt(s.trim(), 10) - 1);
-      targetFiles = indices.map(idx => discovered[idx]).filter(Boolean);
+      targetFiles = await askValidated(
+        rl,
+        `Ingresá los números separados por coma [1-${discovered.length}] (ej: 1,3)`,
+        '',
+        (v) => {
+          const parts = v.split(',').map(s => s.trim()).filter(Boolean);
+          if (parts.length === 0) return null;
+          const chosen = [];
+          for (const p of parts) {
+            if (!/^\d+$/.test(p)) return null;
+            const file = discovered[parseInt(p, 10) - 1];
+            if (!file) return null;
+            chosen.push(file);
+          }
+          return chosen;
+        },
+        `Ingresá números válidos entre 1 y ${discovered.length} separados por coma.`
+      );
     } else {
       targetFiles = discovered;
     }
 
-    const filtrarFecha = await ask(rl, '¿Filtrar por año/mes específico? [s/N]', 'N');
-    if (filtrarFecha.toLowerCase() === 's') {
-      const anio = await ask(rl, 'Año (YYYY)', '2026');
-      const mes = await ask(rl, 'Mes (1-12 o dejar vacío para todo el año)', '1');
+    const filtrarFecha = await askValidated(
+      rl,
+      '¿Filtrar por año/mes específico? [s/N]',
+      'N',
+      (v) => {
+        const n = v.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        if (['s', 'si', 'y', 'yes'].includes(n)) return true;
+        if (['n', 'no'].includes(n)) return false;
+        return null;
+      },
+      'Ingresá S (sí) o N (no).'
+    );
+    if (filtrarFecha) {
+      const anio = await askValidated(
+        rl,
+        'Año (YYYY)',
+        '2026',
+        (v) => (/^\d{4}$/.test(v) && Number(v) >= 2005 && Number(v) <= 2035 ? Number(v) : null),
+        'Ingresá un año válido de 4 dígitos (2005-2035).'
+      );
+      const mes = await askValidated(
+        rl,
+        'Mes (1-12 o escribí "todos" para todo el año)',
+        'todos',
+        (v) => {
+          const n = v.toLowerCase();
+          if (n === 'todos' || n === '') return '';
+          return (/^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 12) ? Number(v) : null;
+        },
+        'Ingresá un número entre 1 y 12, o "todos".'
+      );
       if (mes) {
         const mesStr = String(mes).padStart(2, '0');
         startUnix = parseArtToUnix(`${anio}-${mesStr}-01`, false);
@@ -259,22 +355,20 @@ async function main() {
     targetFiles = findJsonFiles('.');
   }
 
+  // Priorizar manifiestos de media de comentarios para evitar mantener millones de referencias en RAM
+  targetFiles = [...targetFiles].sort((a, b) => {
+    const aIsCommMedia = /media_comments/i.test(path.basename(a)) ? 0 : 1;
+    const bIsCommMedia = /media_comments/i.test(path.basename(b)) ? 0 : 1;
+    return aIsCommMedia - bIsCommMedia;
+  });
+
   console.log('\n========================================================');
   console.log(`Archivos a consolidar: ${targetFiles.length}`);
   if (startUnix > 0 || endUnix < Infinity) {
     console.log(`Filtro temporal activo: Desde ${startUnix} hasta ${endUnix}`);
   }
+  console.log(`Modo escalable: Streaming + ${NUM_BUCKETS} particiones en disco (baja RAM)`);
   console.log('========================================================\n');
-
-  const seenPostIds = new Set();
-  const postRecordById = new Map(); // postId -> referencia al objeto post para fusionar metadatos (selftext, media_files, etc.)
-  const seenCommentIds = new Set();
-  const commentRecordById = new Map(); // commentId -> referencia al objeto comentario para fusionar media_files
-  const pendingCommentMedia = new Map(); // commentId -> media_files[] si media_comments.json se leyó antes
-  const userMap = new Map(); // autor -> { usuario, posts: [], comentarios: [] }
-  const anonBucket = { posts: [], comentarios: [], subreddits: new Set(), flairs: new Set() };
-  let anonPostsCount = 0;
-  let anonCommentsCount = 0;
 
   function normalizeMediaRef(relPath, baseDir) {
     if (!relPath) return null;
@@ -285,320 +379,465 @@ async function main() {
     return `${cleanBase}/${cleanRel}`;
   }
 
-  function getUserBucket(author) {
-    if (!author || author === '[deleted]' || author === '[removed]') return null;
-    if (!userMap.has(author)) {
-      userMap.set(author, {
-        usuario: author,
-        posts: [],
-        comentarios: [],
-        subreddits: new Set(),
-        flairs: new Set()
-      });
+  const tmpWorkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reddit-consolidar-'));
+  let totalPostsIndexed = 0;
+  let totalCommentsIndexed = 0;
+  let totalRealUsers = 0;
+  let csvPath = '';
+
+  try {
+    const bucketPaths = [];
+    const bucketStreams = [];
+    for (let b = 0; b < NUM_BUCKETS; b++) {
+      const bp = path.join(tmpWorkDir, `bucket_${b}.jsonl`);
+      bucketPaths.push(bp);
+      bucketStreams.push(fs.createWriteStream(bp, { encoding: 'utf-8' }));
     }
-    return userMap.get(author);
-  }
+    const anonBucketPath = path.join(tmpWorkDir, 'bucket_anon.jsonl');
+    const anonWs = fs.createWriteStream(anonBucketPath, { encoding: 'utf-8' });
 
-  // Ingesta de archivos
-  for (const filePath of targetFiles) {
-    if (!fs.existsSync(filePath)) continue;
-    let data;
-    try {
-      const fSize = fs.statSync(filePath).size;
-      if (fSize >= 300 * 1024 * 1024) {
-        console.log(`Leyendo archivo grande en streaming (${(fSize / (1024 * 1024)).toFixed(1)} MB): ${filePath}...`);
-        data = await readJsonArrayStream(filePath);
-      } else {
-        data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-      }
-    } catch (e) {
-      console.warn(`Aviso: Error al parsear "${filePath}" (${e.message}). Salteando.`);
-      continue;
-    }
+    const postRecordById = new Map(); // postId -> objeto post enriquecido (se vuelca a disco al finalizar Fase 1)
+    const pendingCommentMedia = new Map(); // commentId -> media_files[]
 
-    if (!Array.isArray(data)) continue;
+    // FASE 1: Ingesta en streaming elemento por elemento -> volcado inmediato de comentarios a buckets
+    for (const filePath of targetFiles) {
+      if (!fs.existsSync(filePath)) continue;
+      const fSizeMb = (fs.statSync(filePath).size / (1024 * 1024)).toFixed(1);
+      const fileDirNorm = path.dirname(filePath).replace(/\\/g, '/');
+      let fileItems = 0;
+      let fileComments = 0;
 
-    console.log(`Procesando: ${filePath} (${data.length} registros)...`);
-    const fileDirNorm = path.dirname(filePath).replace(/\\/g, '/');
+      console.log(`Procesando en streaming (${fSizeMb} MB): ${filePath}...`);
 
-    for (const item of data) {
-      // 0. Manifiesto opcional de imágenes/GIFs en comentarios (descargar_media_comments.js -> media_comments.json)
-      if (item && item.tipo === 'comment_media' && item.comment_id && Array.isArray(item.media_files) && item.media_files.length > 0) {
-        const cBaseDir = item.media_base_dir || fileDirNorm;
-        const normFiles = item.media_files.map(mf => ({
-          ...mf,
-          local_path: normalizeMediaRef(mf.local_path, cBaseDir)
-        }));
-        const existingComm = commentRecordById.get(item.comment_id);
-        if (existingComm) {
-          existingComm.media_files = normFiles;
+      try {
+        const res = await streamJsonArray(filePath, async (item) => {
+          fileItems++;
+          if (fileItems % 25000 === 0) {
+            process.stdout.write(`\r  ... ${fileItems} registros leídos (${fileComments} comentarios volcados)`);
+          }
+
+          if (!item || typeof item !== 'object') return;
+
+          // 0. Manifiesto opcional de imágenes/GIFs en comentarios (media_comments.json)
+          if (item.tipo === 'comment_media' && item.comment_id && Array.isArray(item.media_files) && item.media_files.length > 0) {
+            const cBaseDir = item.media_base_dir || fileDirNorm;
+            const normFiles = item.media_files.map(mf => ({
+              ...mf,
+              local_path: normalizeMediaRef(mf.local_path, cBaseDir)
+            }));
+            pendingCommentMedia.set(item.comment_id, normFiles);
+            return;
+          }
+
+          // 1. Extraer o enriquecer Post si existe (soporta posts.json, _comentarios.json y master.json)
+          const postId = item.id || item.post_id;
+          const postTitle = item.title || item.post_title || '';
+          const createdUtc = item.created_utc || item.post_date_utc || 0;
+          const author = item.author || item.post_author;
+          const withinDate = (!createdUtc || (createdUtc >= startUnix && createdUtc <= endUnix));
+
+          const incomingBody = item.selftext || item.post_selftext || item.cuerpo || '';
+          const incomingScore = typeof item.score === 'number'
+            ? item.score
+            : (typeof item.post_score === 'number' ? item.post_score : 0);
+          const incomingFlair = item.flair || item.post_flair || '';
+          const incomingUrl = item.url || item.original_url || item.post_url || '';
+          const incomingNumComments = item.num_comments || item.comments_count || item.num_comments_declarados || 0;
+          const mediaBaseDir = item.media_base_dir || (Array.isArray(item.media_files) || item.text_file_path ? fileDirNorm : '');
+          const incomingTextFile = item.text_file_path ? normalizeMediaRef(item.text_file_path, mediaBaseDir) : null;
+          const incomingMediaFiles = Array.isArray(item.media_files) && item.media_files.length > 0
+            ? item.media_files.map(mf => ({
+                ...mf,
+                local_path: normalizeMediaRef(mf.local_path, mediaBaseDir)
+              }))
+            : null;
+
+          if (postId && withinDate && postTitle) {
+            const existing = postRecordById.get(postId);
+            if (!existing) {
+              const isAnonPost = (!author || author === '[deleted]' || author === '[removed]');
+              const postSub = extractSubreddit(item, filePath);
+              const postObj = {
+                tipo: 'post',
+                id: postId,
+                subreddit: postSub,
+                created_utc: createdUtc,
+                date_art: item.date_art || item.post_date_art || '',
+                score: incomingScore,
+                titulo: postTitle,
+                cuerpo: incomingBody,
+                flair: incomingFlair,
+                permalink: item.permalink || item.post_permalink || '',
+                url: incomingUrl,
+                num_comments: incomingNumComments,
+                _author: isAnonPost ? '' : author
+              };
+              if (item.post_type) postObj.post_type = item.post_type;
+              if (incomingTextFile) postObj.text_file_path = incomingTextFile;
+              if (incomingMediaFiles) postObj.media_files = incomingMediaFiles;
+              if (isAnonPost) postObj.autor_eliminado = true;
+
+              postRecordById.set(postId, postObj);
+            } else {
+              // Fusión/Enriquecimiento desde _comentarios.json o master.json
+              if (!existing.cuerpo && incomingBody) existing.cuerpo = incomingBody;
+              if (!existing.url && incomingUrl) existing.url = incomingUrl;
+              if (!existing.flair && incomingFlair) existing.flair = incomingFlair;
+              if (!existing.created_utc && createdUtc) existing.created_utc = createdUtc;
+              if (!existing.date_art && (item.date_art || item.post_date_art)) {
+                existing.date_art = item.date_art || item.post_date_art;
+              }
+              if (incomingNumComments > (existing.num_comments || 0)) {
+                existing.num_comments = incomingNumComments;
+              }
+              if (!existing.post_type && item.post_type) existing.post_type = item.post_type;
+              if (!existing.text_file_path && incomingTextFile) existing.text_file_path = incomingTextFile;
+              if ((!existing.media_files || existing.media_files.length === 0) && incomingMediaFiles) {
+                existing.media_files = incomingMediaFiles;
+              }
+            }
+          }
+
+          // 2. Extraer Comentarios y volcar inmediatamente a su partición en disco (0 comentarios retenidos en RAM)
+          const commentsList = item.comments;
+          if (Array.isArray(commentsList)) {
+            const parentSub = extractSubreddit(item, filePath);
+            for (const c of commentsList) {
+              if (!c || !c.id) continue;
+              const cTime = c.created_utc;
+              if (cTime && (cTime < startUnix || cTime > endUnix)) continue;
+
+              const isAnonComm = (!c.author || c.author === '[deleted]' || c.author === '[removed]');
+              const commSub = extractSubreddit(c, filePath) || parentSub;
+              const isLiteComm = Boolean(c.lite && !c.body);
+
+              const commObj = {
+                tipo: 'comentario',
+                id: c.id,
+                subreddit: commSub,
+                created_utc: c.created_utc,
+                date_art: c.date_art || '',
+                score: typeof c.score === 'number' ? c.score : 0,
+                post_id: postId || c.post_id || '',
+                post_titulo: postTitle || '',
+                parent_id: c.parent_id || '',
+                depth: c.depth || 0,
+                permalink: c.permalink || ''
+              };
+              if (isLiteComm) {
+                commObj.lite = true;
+              } else {
+                commObj.cuerpo = c.body || '';
+              }
+              if (Array.isArray(c.media_urls) && c.media_urls.length > 0) {
+                commObj.media_urls = c.media_urls;
+              }
+              if (pendingCommentMedia.has(c.id)) {
+                commObj.media_files = pendingCommentMedia.get(c.id);
+                pendingCommentMedia.delete(c.id);
+              }
+
+              fileComments++;
+              if (isAnonComm) {
+                commObj.autor_eliminado = true;
+                await writeStreamChunk(anonWs, JSON.stringify(commObj) + '\n');
+              } else {
+                const bIdx = hashBucket(c.author, NUM_BUCKETS);
+                await writeStreamChunk(bucketStreams[bIdx], JSON.stringify({ a: c.author, d: commObj }) + '\n');
+              }
+            }
+          }
+        });
+
+        if (fileItems >= 25000) process.stdout.write('\n');
+        if (!res.isArray) {
+          console.warn(`Aviso: "${filePath}" no es un arreglo JSON. Salteando.`);
         } else {
-          pendingCommentMedia.set(item.comment_id, normFiles);
+          console.log(`  -> Completado: ${res.count} registros (${fileComments} comentarios)`);
         }
+      } catch (e) {
+        if (fileItems >= 25000) process.stdout.write('\n');
+        console.warn(`Aviso: Error al parsear "${filePath}" (${e.message}). Salteando.`);
+      }
+    }
+
+    // Volcar posts enriquecidos a sus particiones y liberar RAM antes de Fase 2
+    totalPostsIndexed = postRecordById.size;
+    console.log(`\nVolcando ${totalPostsIndexed} publicaciones únicas a particiones temporales...`);
+    for (const postObj of postRecordById.values()) {
+      const author = postObj._author;
+      delete postObj._author;
+      if (!author || postObj.autor_eliminado) {
+        await writeStreamChunk(anonWs, JSON.stringify(postObj) + '\n');
+      } else {
+        const bIdx = hashBucket(author, NUM_BUCKETS);
+        await writeStreamChunk(bucketStreams[bIdx], JSON.stringify({ a: author, d: postObj }) + '\n');
+      }
+    }
+    postRecordById.clear();
+    pendingCommentMedia.clear();
+
+    await Promise.all([
+      ...bucketStreams.map(ws => closeWriteStream(ws)),
+      closeWriteStream(anonWs)
+    ]);
+
+    // FASE 2: Consolidación partición por partición -> almacenamiento compacto indexado por byte-offset
+    console.log('\n--- FASE 2: Consolidando y ordenando líneas de tiempo por partición ---');
+
+    const storePath = path.join(tmpWorkDir, 'profiles_store.bin');
+    const storeWs = fs.createWriteStream(storePath);
+    let storeOffset = 0;
+    const profileIndex = []; // Solo metadatos livianos para ordenamiento global y CSV
+    let anonPostsCount = 0;
+    let anonCommentsCount = 0;
+    let anonEntryMeta = null;
+
+    for (let b = 0; b < NUM_BUCKETS; b++) {
+      const bp = bucketPaths[b];
+      if (!fs.existsSync(bp) || fs.statSync(bp).size === 0) {
+        try { fs.unlinkSync(bp); } catch (_) {}
         continue;
       }
 
-      // 1. Extraer o enriquecer Post si existe (soporta posts.json, _comentarios.json y master.json)
-      const postId = item.id || item.post_id;
-      const postTitle = item.title || item.post_title || '';
-      const createdUtc = item.created_utc || item.post_date_utc || 0;
-      const author = item.author || item.post_author;
-      const withinDate = (!createdUtc || (createdUtc >= startUnix && createdUtc <= endUnix));
+      const bucketUsers = new Map();
+      const bucketSeenComments = new Set();
 
-      const incomingBody = item.selftext || item.post_selftext || item.cuerpo || '';
-      const incomingScore = typeof item.score === 'number'
-        ? item.score
-        : (typeof item.post_score === 'number' ? item.post_score : 0);
-      const incomingFlair = item.flair || item.post_flair || '';
-      const incomingUrl = item.url || item.original_url || item.post_url || '';
-      const incomingNumComments = item.num_comments || item.comments_count || item.num_comments_declarados || 0;
-      const mediaBaseDir = item.media_base_dir || (Array.isArray(item.media_files) || item.text_file_path ? fileDirNorm : '');
-      const incomingTextFile = item.text_file_path ? normalizeMediaRef(item.text_file_path, mediaBaseDir) : null;
-      const incomingMediaFiles = Array.isArray(item.media_files) && item.media_files.length > 0
-        ? item.media_files.map(mf => ({
-            ...mf,
-            local_path: normalizeMediaRef(mf.local_path, mediaBaseDir)
-          }))
-        : null;
+      const rlBucket = readline.createInterface({
+        input: fs.createReadStream(bp, { encoding: 'utf-8', highWaterMark: 256 * 1024 }),
+        crlfDelay: Infinity
+      });
 
-      if (postId && withinDate && postTitle) {
-        if (!seenPostIds.has(postId)) {
-          seenPostIds.add(postId);
-          const bucket = getUserBucket(author);
-          const targetBucket = bucket || anonBucket;
-          const postSub = extractSubreddit(item, filePath);
-          if (postSub) targetBucket.subreddits.add(postSub);
+      for await (const line of rlBucket) {
+        if (!line) continue;
+        const rec = JSON.parse(line);
+        const author = rec.a;
+        const item = rec.d;
 
-          const postObj = {
-            tipo: 'post',
-            id: postId,
-            subreddit: postSub,
-            created_utc: createdUtc,
-            date_art: item.date_art || item.post_date_art || '',
-            score: incomingScore,
-            titulo: postTitle,
-            cuerpo: incomingBody,
-            flair: incomingFlair,
-            permalink: item.permalink || item.post_permalink || '',
-            url: incomingUrl,
-            num_comments: incomingNumComments
-          };
-          if (item.post_type) postObj.post_type = item.post_type;
-          if (incomingTextFile) postObj.text_file_path = incomingTextFile;
-          if (incomingMediaFiles) postObj.media_files = incomingMediaFiles;
-          if (!bucket) {
-            postObj.autor_eliminado = true;
-            anonPostsCount++;
-          }
+        if (item.tipo === 'comentario') {
+          if (bucketSeenComments.has(item.id)) continue;
+          bucketSeenComments.add(item.id);
+          totalCommentsIndexed++;
+        }
 
-          targetBucket.posts.push(postObj);
-          postRecordById.set(postId, postObj);
-          if (incomingFlair) targetBucket.flairs.add(incomingFlair);
+        let u = bucketUsers.get(author);
+        if (!u) {
+          u = { posts: [], comentarios: [], subreddits: new Set(), flairs: new Set() };
+          bucketUsers.set(author, u);
+        }
+        if (item.subreddit) u.subreddits.add(item.subreddit);
+        if (item.tipo === 'post') {
+          u.posts.push(item);
+          if (item.flair) u.flairs.add(item.flair);
         } else {
-          // Fusión/Enriquecimiento: completar cuerpo, tipo de post y archivos multimedia desde _comentarios.json o master.json
-          const existing = postRecordById.get(postId);
-          if (existing) {
-            if (!existing.cuerpo && incomingBody) existing.cuerpo = incomingBody;
-            if (!existing.url && incomingUrl) existing.url = incomingUrl;
-            if (!existing.flair && incomingFlair) existing.flair = incomingFlair;
-            if (!existing.created_utc && createdUtc) existing.created_utc = createdUtc;
-            if (!existing.date_art && (item.date_art || item.post_date_art)) {
-              existing.date_art = item.date_art || item.post_date_art;
-            }
-            if (incomingNumComments > (existing.num_comments || 0)) {
-              existing.num_comments = incomingNumComments;
-            }
-            if (!existing.post_type && item.post_type) existing.post_type = item.post_type;
-            if (!existing.text_file_path && incomingTextFile) existing.text_file_path = incomingTextFile;
-            if ((!existing.media_files || existing.media_files.length === 0) && incomingMediaFiles) {
-              existing.media_files = incomingMediaFiles;
-            }
-          }
+          u.comentarios.push(item);
         }
       }
 
-      // 2. Extraer Comentarios si contiene lista de comentarios
-      const commentsList = item.comments;
-      if (Array.isArray(commentsList)) {
-        for (const c of commentsList) {
-          if (!c || !c.id) continue;
-          const cTime = c.created_utc;
-          if (cTime && (cTime < startUnix || cTime > endUnix)) continue;
+      for (const [author, uData] of bucketUsers.entries()) {
+        const totalPosts = uData.posts.length;
+        const totalComentarios = uData.comentarios.length;
+        const totalInteracciones = totalPosts + totalComentarios;
 
-          if (!seenCommentIds.has(c.id)) {
-            seenCommentIds.add(c.id);
-            const cBucket = getUserBucket(c.author);
-            const targetBucket = cBucket || anonBucket;
-            const commSub = extractSubreddit(c, filePath) || extractSubreddit(item, filePath);
-            if (commSub) targetBucket.subreddits.add(commSub);
+        if (totalInteracciones < minActividades) continue;
 
-            const commObj = {
-              tipo: 'comentario',
-              id: c.id,
-              subreddit: commSub,
-              created_utc: c.created_utc,
-              date_art: c.date_art || '',
-              score: typeof c.score === 'number' ? c.score : 0,
-              post_id: postId || c.post_id || '',
-              post_titulo: postTitle || '',
-              parent_id: c.parent_id || '',
-              depth: c.depth || 0,
-              cuerpo: c.body || '',
-              permalink: c.permalink || ''
-            };
-            if (Array.isArray(c.media_urls) && c.media_urls.length > 0) {
-              commObj.media_urls = c.media_urls;
-            }
-            if (pendingCommentMedia.has(c.id)) {
-              commObj.media_files = pendingCommentMedia.get(c.id);
-              pendingCommentMedia.delete(c.id);
-            }
-            if (!cBucket) {
-              commObj.autor_eliminado = true;
-              anonCommentsCount++;
-            }
-            targetBucket.comentarios.push(commObj);
-            commentRecordById.set(c.id, commObj);
-          }
+        const timeline = [...uData.posts, ...uData.comentarios];
+        timeline.sort((a, b) => (a.created_utc || 0) - (b.created_utc || 0));
+
+        let scoreTotal = 0;
+        for (const act of timeline) {
+          scoreTotal += (act.score || 0);
         }
+        const scorePromedio = parseFloat((scoreTotal / (totalInteracciones || 1)).toFixed(2));
+        const primeraAct = timeline[0] ? timeline[0].date_art : '';
+        const ultimaAct = timeline[timeline.length - 1] ? timeline[timeline.length - 1].date_art : '';
+
+        const profileObj = {
+          usuario: author,
+          metricas: {
+            total_interacciones: totalInteracciones,
+            total_posts: totalPosts,
+            total_comentarios: totalComentarios,
+            score_total: scoreTotal,
+            score_promedio: scorePromedio,
+            primera_actividad_art: primeraAct,
+            ultima_actividad_art: ultimaAct,
+            subreddits_activos: Array.from(uData.subreddits),
+            flairs_utilizados: Array.from(uData.flairs)
+          },
+          timeline
+        };
+
+        const buf = Buffer.from(JSON.stringify(profileObj), 'utf-8');
+        await writeStreamChunk(storeWs, buf);
+
+        profileIndex.push({
+          usuario: author,
+          total_interacciones: totalInteracciones,
+          total_posts: totalPosts,
+          total_comentarios: totalComentarios,
+          score_total: scoreTotal,
+          score_promedio: scorePromedio,
+          primera_actividad_art: primeraAct,
+          ultima_actividad_art: ultimaAct,
+          offset: storeOffset,
+          length: buf.length
+        });
+        storeOffset += buf.length;
       }
+
+      bucketUsers.clear();
+      bucketSeenComments.clear();
+      try { fs.unlinkSync(bp); } catch (_) {}
+      process.stdout.write(`\r  Partición ${b + 1}/${NUM_BUCKETS} consolidada (${profileIndex.length} perfiles acumulados)...`);
     }
-  }
+    process.stdout.write('\n');
 
-  console.log('\n--- FASE 2: Consolidando y ordenando líneas de tiempo ---');
+    // Procesar bloque anónimo [deleted] SOLO para reconstrucción de feeds/hilos (excluido de ranking, stats y grafo)
+    if (fs.existsSync(anonBucketPath) && fs.statSync(anonBucketPath).size > 0) {
+      const anonPosts = [];
+      const anonComments = [];
+      const anonSubs = new Set();
+      const anonFlairs = new Set();
+      const anonSeenComments = new Set();
 
-  const perfilesFinales = [];
+      const rlAnon = readline.createInterface({
+        input: fs.createReadStream(anonBucketPath, { encoding: 'utf-8', highWaterMark: 256 * 1024 }),
+        crlfDelay: Infinity
+      });
 
-  for (const [author, data] of userMap.entries()) {
-    const totalPosts = data.posts.length;
-    const totalComentarios = data.comentarios.length;
-    const totalInteracciones = totalPosts + totalComentarios;
+      for await (const line of rlAnon) {
+        if (!line) continue;
+        const item = JSON.parse(line);
+        if (item.tipo === 'comentario') {
+          if (anonSeenComments.has(item.id)) continue;
+          anonSeenComments.add(item.id);
+          anonComments.push(item);
+          anonCommentsCount++;
+          totalCommentsIndexed++;
+        } else {
+          anonPosts.push(item);
+          anonPostsCount++;
+          if (item.flair) anonFlairs.add(item.flair);
+        }
+        if (item.subreddit) anonSubs.add(item.subreddit);
+      }
 
-    if (totalInteracciones < minActividades) continue;
-
-    // Unir posts y comentarios y ordenar cronológicamente
-    const timeline = [...data.posts, ...data.comentarios];
-    timeline.sort((a, b) => (a.created_utc || 0) - (b.created_utc || 0));
-
-    let scoreTotal = 0;
-    for (const act of timeline) {
-      scoreTotal += (act.score || 0);
+      if (anonPosts.length > 0 || anonComments.length > 0) {
+        const anonTimeline = [...anonPosts, ...anonComments];
+        anonTimeline.sort((a, b) => (a.created_utc || 0) - (b.created_utc || 0));
+        const anonProfileEntry = {
+          usuario: '[deleted]',
+          es_anonimo: true,
+          metricas: {
+            total_interacciones: anonTimeline.length,
+            total_posts: anonPosts.length,
+            total_comentarios: anonComments.length,
+            score_total: 0,
+            score_promedio: 0,
+            primera_actividad_art: anonTimeline[0] ? anonTimeline[0].date_art : '',
+            ultima_actividad_art: anonTimeline[anonTimeline.length - 1] ? anonTimeline[anonTimeline.length - 1].date_art : '',
+            subreddits_activos: Array.from(anonSubs),
+            flairs_utilizados: Array.from(anonFlairs)
+          },
+          timeline: anonTimeline
+        };
+        const buf = Buffer.from(JSON.stringify(anonProfileEntry), 'utf-8');
+        await writeStreamChunk(storeWs, buf);
+        anonEntryMeta = { offset: storeOffset, length: buf.length };
+        storeOffset += buf.length;
+      }
+      try { fs.unlinkSync(anonBucketPath); } catch (_) {}
     }
 
-    const primeraAct = timeline[0] ? timeline[0].date_art : '';
-    const ultimaAct = timeline[timeline.length - 1] ? timeline[timeline.length - 1].date_art : '';
+    await closeWriteStream(storeWs);
 
-    perfilesFinales.push({
-      usuario: author,
-      metricas: {
-        total_interacciones: totalInteracciones,
-        total_posts: totalPosts,
-        total_comentarios: totalComentarios,
-        score_total: scoreTotal,
-        score_promedio: parseFloat((scoreTotal / (totalInteracciones || 1)).toFixed(2)),
-        primera_actividad_art: primeraAct,
-        ultima_actividad_art: ultimaAct,
-        subreddits_activos: Array.from(data.subreddits),
-        flairs_utilizados: Array.from(data.flairs)
-      },
-      timeline: timeline
-    });
-  }
+    // FASE 3: Ordenamiento global del índice liviano y ensamblado final en streaming
+    profileIndex.sort((a, b) => b.total_interacciones - a.total_interacciones || b.score_total - a.score_total);
+    totalRealUsers = profileIndex.length;
 
-  // Ordenar perfiles de mayor actividad / score general a menor
-  perfilesFinales.sort((a, b) => b.metricas.total_interacciones - a.metricas.total_interacciones || b.metricas.score_total - a.metricas.score_total);
-
-  // Metadata resumen
-  const metadata = {
-    fecha_generacion: new Date().toISOString(),
-    usuarios_identificados: perfilesFinales.length,
-    posts_totales_indexados: seenPostIds.size,
-    comentarios_totales_indexados: seenCommentIds.size,
-    actividades_anonimas: {
-      posts_eliminados: anonPostsCount,
-      comentarios_eliminados: anonCommentsCount
-    }
-  };
-
-  // Preparar registro especial [deleted] SOLO para reconstrucción de feeds/hilos (excluido de ranking, stats y grafo)
-  let anonProfileEntry = null;
-  if (anonBucket.posts.length > 0 || anonBucket.comentarios.length > 0) {
-    const anonTimeline = [...anonBucket.posts, ...anonBucket.comentarios];
-    anonTimeline.sort((a, b) => (a.created_utc || 0) - (b.created_utc || 0));
-    anonProfileEntry = {
-      usuario: '[deleted]',
-      es_anonimo: true,
-      metricas: {
-        total_interacciones: anonTimeline.length,
-        total_posts: anonBucket.posts.length,
-        total_comentarios: anonBucket.comentarios.length,
-        score_total: 0,
-        score_promedio: 0,
-        primera_actividad_art: anonTimeline[0] ? anonTimeline[0].date_art : '',
-        ultima_actividad_art: anonTimeline[anonTimeline.length - 1] ? anonTimeline[anonTimeline.length - 1].date_art : '',
-        subreddits_activos: Array.from(anonBucket.subreddits),
-        flairs_utilizados: Array.from(anonBucket.flairs)
-      },
-      timeline: anonTimeline
+    const metadata = {
+      fecha_generacion: new Date().toISOString(),
+      usuarios_identificados: totalRealUsers,
+      posts_totales_indexados: totalPostsIndexed,
+      comentarios_totales_indexados: totalCommentsIndexed,
+      actividades_anonimas: {
+        posts_eliminados: anonPostsCount,
+        comentarios_eliminados: anonCommentsCount
+      }
     };
-  }
 
-  // Determinar ruta de salida: carpeta única en resultados/consolidados/ si no se pasó --out
-  if (!outputFile) {
-    const outDir = createUniqueConsolidationDir();
-    outputFile = path.join(outDir, 'perfiles_usuarios.json');
-  } else {
-    const outParent = path.dirname(outputFile);
-    if (outParent && outParent !== '.') {
-      fs.mkdirSync(outParent, { recursive: true });
+    // Determinar ruta de salida: carpeta única en resultados/consolidados/ si no se pasó --out
+    if (!outputFile) {
+      const outDir = createUniqueConsolidationDir();
+      outputFile = path.join(outDir, 'perfiles_usuarios.json');
+    } else {
+      const outParent = path.dirname(outputFile);
+      if (outParent && outParent !== '.') {
+        fs.mkdirSync(outParent, { recursive: true });
+      }
     }
-  }
 
-  // Guardar archivo JSON consolidado mediante streaming para evitar 'RangeError: Invalid string length'
-  const perfilesParaJson = anonProfileEntry ? [...perfilesFinales, anonProfileEntry] : perfilesFinales;
-  console.log(`\nEscribiendo "${outputFile}" mediante streaming (${perfilesFinales.length} perfiles reales${anonProfileEntry ? ' + actividades [deleted]' : ''})...`);
-  const jsonWs = fs.createWriteStream(outputFile, { encoding: 'utf-8' });
+    const totalToWrite = totalRealUsers + (anonEntryMeta ? 1 : 0);
+    console.log(`\nEscribiendo "${outputFile}" mediante streaming (${totalRealUsers} perfiles reales${anonEntryMeta ? ' + actividades [deleted]' : ''})...`);
+    const jsonWs = fs.createWriteStream(outputFile);
 
-  jsonWs.write('{\n');
-  const metaStr = JSON.stringify(metadata, null, 2).replace(/\n/g, '\n  ');
-  jsonWs.write('  "metadata": ' + metaStr + ',\n');
-  jsonWs.write('  "perfiles": [\n');
+    await writeStreamChunk(jsonWs, '{\n');
+    const metaStr = JSON.stringify(metadata, null, 2).replace(/\n/g, '\n  ');
+    await writeStreamChunk(jsonWs, '  "metadata": ' + metaStr + ',\n');
+    await writeStreamChunk(jsonWs, '  "perfiles": [\n');
 
-  for (let i = 0; i < perfilesParaJson.length; i++) {
-    const isLast = (i === perfilesParaJson.length - 1);
-    const line = '    ' + JSON.stringify(perfilesParaJson[i]) + (isLast ? '\n' : ',\n');
-    const ok = jsonWs.write(line);
-    if (!ok) {
-      await new Promise(resolve => jsonWs.once('drain', resolve));
+    const storeFd = fs.openSync(storePath, 'r');
+    try {
+      const writeEntryFromStore = async (entry, isLast) => {
+        const entryBuf = Buffer.allocUnsafe(entry.length);
+        let bytesRead = 0;
+        while (bytesRead < entry.length) {
+          const n = fs.readSync(storeFd, entryBuf, bytesRead, entry.length - bytesRead, entry.offset + bytesRead);
+          if (n <= 0) break;
+          bytesRead += n;
+        }
+        await writeStreamChunk(jsonWs, '    ');
+        await writeStreamChunk(jsonWs, entryBuf);
+        await writeStreamChunk(jsonWs, isLast ? '\n' : ',\n');
+      };
+
+      for (let i = 0; i < profileIndex.length; i++) {
+        const isLast = (i === totalToWrite - 1);
+        await writeEntryFromStore(profileIndex[i], isLast);
+      }
+      if (anonEntryMeta) {
+        await writeEntryFromStore(anonEntryMeta, true);
+      }
+    } finally {
+      fs.closeSync(storeFd);
     }
-  }
 
-  jsonWs.write('  ]\n}\n');
-  await new Promise(resolve => jsonWs.end(resolve));
+    await writeStreamChunk(jsonWs, '  ]\n}\n');
+    await closeWriteStream(jsonWs);
 
-  // Guardar CSV resumen de ranking para Excel mediante streaming
-  const csvPath = outputFile.replace(/\.json$/, '') + '_ranking.csv';
-  console.log(`Escribiendo "${csvPath}"...`);
-  const csvWs = fs.createWriteStream(csvPath, { encoding: 'utf-8' });
-  csvWs.write('\uFEFF#;Usuario;Total Interacciones;Posts;Comentarios;Score Total;Score Promedio;Primera Actividad;Ultima Actividad\n');
+    // Guardar CSV resumen de ranking para Excel mediante streaming
+    csvPath = outputFile.replace(/\.json$/, '') + '_ranking.csv';
+    console.log(`Escribiendo "${csvPath}"...`);
+    const csvWs = fs.createWriteStream(csvPath, { encoding: 'utf-8' });
+    await writeStreamChunk(csvWs, '\uFEFF#;Usuario;Total Interacciones;Posts;Comentarios;Score Total;Score Promedio;Primera Actividad;Ultima Actividad\n');
 
-  for (let i = 0; i < perfilesFinales.length; i++) {
-    const p = perfilesFinales[i];
-    const m = p.metricas;
-    const line = `${i + 1};"${p.usuario}";${m.total_interacciones};${m.total_posts};${m.total_comentarios};${m.score_total};${m.score_promedio};"${m.primera_actividad_art}";"${m.ultima_actividad_art}"\n`;
-    const ok = csvWs.write(line);
-    if (!ok) {
-      await new Promise(resolve => csvWs.once('drain', resolve));
+    for (let i = 0; i < profileIndex.length; i++) {
+      const p = profileIndex[i];
+      const line = `${i + 1};"${p.usuario}";${p.total_interacciones};${p.total_posts};${p.total_comentarios};${p.score_total};${p.score_promedio};"${p.primera_actividad_art}";"${p.ultima_actividad_art}"\n`;
+      await writeStreamChunk(csvWs, line);
     }
+    await closeWriteStream(csvWs);
+  } finally {
+    fs.rmSync(tmpWorkDir, { recursive: true, force: true });
   }
-  await new Promise(resolve => csvWs.end(resolve));
 
   console.log('========================================================');
   console.log('       CONSOLIDACIÓN DE PERFILES COMPLETADA             ');
   console.log('========================================================');
-  console.log(`Publicaciones únicas indexadas:   ${seenPostIds.size}`);
-  console.log(`Comentarios únicos indexados:     ${seenCommentIds.size}`);
-  console.log(`Usuarios únicos identificados:   ${perfilesFinales.length}`);
+  console.log(`Publicaciones únicas indexadas:   ${totalPostsIndexed}`);
+  console.log(`Comentarios únicos indexados:     ${totalCommentsIndexed}`);
+  console.log(`Usuarios únicos identificados:   ${totalRealUsers}`);
   console.log(`\nArchivos de salida generados:`);
   console.log(`  -> JSON Detallado con Timelines: ${outputFile}`);
   console.log(`  -> CSV Ranking para Excel:       ${csvPath}`);

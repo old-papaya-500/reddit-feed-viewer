@@ -16,26 +16,66 @@
       <div class="brand-icon">🗂️</div>
       <div>
         <h1>Reddit Feed Viewer</h1>
-        <p class="subtitle">Visor Offline de Comunidades, Publicaciones e Hilos</p>
+        <p class="subtitle">Visor Offline de Comunidades, Hilos y Perfiles</p>
       </div>
     </div>
 
-    <!-- Controles principales -->
-    <div class="header-right">
+    <!-- Tabs de navegación -->
+    <nav class="nav-tabs" aria-label="Secciones principales">
+      <button type="button" id="tabFeed" class="nav-tab active">🗂️ Feed</button>
+    </nav>
 
-      <label class="btn btn-secondary file-upload-btn" title="Cargar perfiles_usuarios.json">
-        <span>📂 Cargar JSON</span>
+    <!-- Buscador de usuario (siempre visible arriba a la derecha) -->
+    <div class="header-right">
+      <search class="header-search">
+        <label for="headerUserSearch" class="visually-hidden">Buscar post por título o usuario</label>
+        <div class="header-search-box">
+          <span aria-hidden="true">🔍</span>
+          <input
+            type="search"
+            id="headerUserSearch"
+            placeholder="Buscar post o usuario..."
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
+            enterkeyhint="search"
+          >
+          <button type="button" id="headerSearchClearBtn" class="header-search-clear hidden" aria-label="Limpiar búsqueda">✕</button>
+        </div>
+        <!-- Dropdown unificado (título + usuarios) -->
+        <div id="headerSearchDropdown" class="header-search-dropdown hidden" role="listbox" aria-label="Resultados de búsqueda"></div>
+      </search>
+
+      <div class="header-menu-wrap" id="filesMenuWrap">
+        <button
+          type="button"
+          id="filesMenuBtn"
+          class="btn btn-secondary"
+          aria-expanded="false"
+          aria-haspopup="menu"
+          title="Cargar archivo JSON o vaciar memoria"
+        >
+          <span>📁 Archivos ▾</span>
+        </button>
+        <div id="filesMenuDropdown" class="header-menu-dropdown hidden" role="menu" aria-label="Opciones de archivos">
+          <button type="button" id="menuLoadJsonBtn" class="header-menu-item" role="menuitem">
+            <span>📂 Cargar JSON</span>
+          </button>
+          <button type="button" id="clearMemoryBtn" class="header-menu-item header-menu-item-danger" role="menuitem" disabled>
+            <span>🗑️ Vaciar memoria</span>
+          </button>
+        </div>
         <input type="file" id="fileInput" accept=".json" hidden>
-      </label>
+      </div>
 
       <button
         type="button"
-        id="clearMemoryBtn"
-        class="btn btn-secondary clear-memory-btn"
-        title="Vaciar todos los datos cargados en memoria RAM"
-        disabled
+        id="openFeedBuilderBtn"
+        class="btn btn-secondary"
+        title="Abrir el configurador para armar o filtrar el Feed"
       >
-        <span>🗑️ Vaciar</span>
+        <span>⚙️ Armar Feed</span>
       </button>
 
       <button
@@ -49,16 +89,43 @@
         <span id="offlineLabel">Offline: OFF</span>
       </button>
 
-      <select id="stylePresetSelect" class="style-preset-select" title="Cambiar paleta de colores y tipografía" aria-label="Estilo visual">
-        <option value="default">🎨 Original</option>
-        <option value="editorial">📰 Editorial</option>
-        <option value="osint">💻 OSINT</option>
-        <option value="nordic">❄️ Nordic</option>
-      </select>
-
-      <button type="button" id="themeToggle" class="btn btn-icon" title="Cambiar tema claro/oscuro">
-        <span id="themeIcon">🌓</span>
-      </button>
+      <div class="header-menu-wrap" id="visualMenuWrap">
+        <button
+          type="button"
+          id="visualMenuBtn"
+          class="btn btn-secondary"
+          aria-expanded="false"
+          aria-haspopup="menu"
+          title="Cambiar tema claro/oscuro y estilo visual"
+        >
+          <span>🎨 Apariencia ▾</span>
+        </button>
+        <div id="visualMenuDropdown" class="header-menu-dropdown hidden" role="menu" aria-label="Opciones visuales">
+          <div class="header-menu-section-label">Tema</div>
+          <button type="button" id="themeToggle" class="header-menu-item" role="menuitem">
+            <span id="themeIcon">🌓</span>
+            <span id="themeToggleLabel">Cambiar tema</span>
+          </button>
+          <div class="header-menu-sep" role="separator"></div>
+          <div class="header-menu-section-label">Estilo visual</div>
+          <button type="button" class="header-menu-item" data-style-preset="default" role="menuitemradio" aria-checked="true">
+            <span>🎨 Original</span>
+            <span class="header-menu-check" aria-hidden="true">✓</span>
+          </button>
+          <button type="button" class="header-menu-item" data-style-preset="editorial" role="menuitemradio" aria-checked="false">
+            <span>📰 Editorial</span>
+            <span class="header-menu-check" aria-hidden="true">✓</span>
+          </button>
+          <button type="button" class="header-menu-item" data-style-preset="osint" role="menuitemradio" aria-checked="false">
+            <span>💻 OSINT</span>
+            <span class="header-menu-check" aria-hidden="true">✓</span>
+          </button>
+          <button type="button" class="header-menu-item" data-style-preset="nordic" role="menuitemradio" aria-checked="false">
+            <span>❄️ Nordic</span>
+            <span class="header-menu-check" aria-hidden="true">✓</span>
+          </button>
+        </div>
+      </div>
     </div>
   </header>
 
@@ -73,103 +140,37 @@
   <main class="app-main">
 
     <!-- ================================================================= -->
-    <!-- SECCIÓN 1: FEED BUILDER                                           -->
+    <!-- SECCIÓN 1: FEED (VISTA PRINCIPAL CENTRADA)                        -->
     <!-- ================================================================= -->
-    <section id="sectionFeed" class="section-view active" aria-label="Armador de Feed">
-      <div class="feed-layout">
+    <section id="sectionFeed" class="section-view active" aria-label="Feed de Publicaciones">
+      <div class="feed-layout feed-layout-centered">
 
-        <!-- Panel lateral izquierdo: controles del feed -->
-        <aside class="feed-sidebar" aria-label="Configuración del feed">
-          <div class="feed-sidebar-inner">
-
-            <div class="sidebar-block">
-              <h3 class="sidebar-block-title">🗂️ Armar Feed</h3>
-              <p class="sidebar-block-desc">Elegí qué comunidades, fechas o palabras clave mostrar. El feed despliega las publicaciones (posts) y reconstruye su árbol de comentarios al ingresar a cada una.</p>
-            </div>
-
-            <!-- Buscador de Posts por Título -->
-            <div class="sidebar-block">
-              <search>
-                <label for="feedTitleSearch" class="sidebar-block-label">Buscar por título</label>
-                <div class="title-search-wrap">
-                  <input
-                    type="search"
-                    id="feedTitleSearch"
-                    class="date-input"
-                    placeholder="Ej: alquiler, dólar, boca..."
-                    autocomplete="off"
-                    autocorrect="off"
-                    autocapitalize="none"
-                    spellcheck="false"
-                    enterkeyhint="search"
-                  >
-                  <button type="button" id="clearTitleSearchBtn" class="title-search-clear hidden" aria-label="Limpiar búsqueda de título">✕</button>
-                </div>
-              </search>
-            </div>
-
-            <!-- Subreddits -->
-            <div class="sidebar-block">
-              <div class="sidebar-block-header">
-                <h4 class="sidebar-block-label">Comunidades</h4>
-                <div class="sidebar-block-actions">
-                  <button type="button" id="subsSelectAll" class="link-btn">Todas</button>
-                  <span class="link-btn-sep">·</span>
-                  <button type="button" id="subsSelectNone" class="link-btn">Ninguna</button>
-                </div>
-              </div>
-              <div id="subCheckboxList" class="sub-checkbox-list">
-                <p class="sidebar-empty-hint">Cargá un archivo JSON para ver las comunidades disponibles.</p>
-              </div>
-            </div>
-
-            <!-- Rango de fechas -->
-            <div class="sidebar-block">
-              <h4 class="sidebar-block-label">Rango de fechas</h4>
-              <div class="date-range-fields">
-                <div class="date-field">
-                  <label for="feedDateFrom">Desde</label>
-                  <input type="date" id="feedDateFrom" class="date-input">
-                </div>
-                <div class="date-field">
-                  <label for="feedDateTo">Hasta</label>
-                  <input type="date" id="feedDateTo" class="date-input">
-                </div>
-              </div>
-              <button type="button" id="clearDatesBtn" class="link-btn mt-sm">✕ Limpiar fechas</button>
-            </div>
-
-            <!-- Ordenamiento -->
-            <div class="sidebar-block">
-              <h4 class="sidebar-block-label">Ordenar por</h4>
-              <select id="feedSortSelect" class="sidebar-select">
-                <option value="date_desc" selected>▼ Más recientes primero</option>
-                <option value="date_asc">▲ Más antiguos primero</option>
-                <option value="score_desc">▼ Mayor score</option>
-              </select>
-            </div>
-
-            <!-- Botón aplicar + contador -->
-            <div class="sidebar-block sidebar-apply">
-              <button type="button" id="applyFeedBtn" class="btn btn-primary btn-full">
-                ▶ Generar Feed
-              </button>
-              <div id="feedCounterBadge" class="feed-counter-badge hidden">
-                <span id="feedItemCount">0</span> ítems encontrados
-              </div>
-            </div>
-
-          </div>
-        </aside>
-
-        <!-- Panel derecho: feed resultante -->
-        <div class="feed-main-area">
+        <!-- Área principal del feed resultante -->
+        <div class="feed-main-area feed-main-centered">
           <!-- Estado inicial -->
           <div id="feedEmptyState" class="feed-empty-state">
             <div class="feed-empty-icon">🗂️</div>
             <h2>Armá tu feed personalizado</h2>
-            <p>Elegí las comunidades y el rango de fechas en el panel izquierdo, luego presioná <strong>▶ Generar Feed</strong>.</p>
-            <p class="feed-empty-hint">Si aún no cargaste datos, usá el botón <strong>📂 Cargar JSON</strong> arriba a la derecha.</p>
+            <p>Cargá un archivo <code>perfiles_usuarios.json</code>, elegí comunidades, fechas o palabras clave y presioná <strong>▶ Generar Feed</strong>.</p>
+            <div style="margin-top:1.25rem;display:flex;gap:0.65rem;justify-content:center;flex-wrap:wrap;">
+              <button type="button" id="emptyOpenBuilderBtn" class="btn btn-primary">⚙️ Abrir Armar Feed</button>
+            </div>
+          </div>
+
+          <!-- Barra rápida de ordenamiento (visible una vez cargado el feed) -->
+          <div id="feedToolbar" class="feed-toolbar hidden" aria-label="Ordenar feed cargado">
+            <div class="feed-toolbar-left">
+              <span id="feedToolbarCount" class="feed-toolbar-count">0 publicaciones</span>
+              <span id="feedActiveSearchChip" class="feed-active-search-chip hidden">
+                <span id="feedActiveSearchLabel"></span>
+                <button type="button" id="feedActiveSearchClearBtn" class="chip-clear-btn" aria-label="Quitar filtro de título">✕</button>
+              </span>
+            </div>
+            <div class="feed-sort-chips" role="group" aria-label="Orden del feed">
+              <button type="button" class="chip active" data-feed-sort="date_desc" title="Más recientes primero">▼ Fecha descendente</button>
+              <button type="button" class="chip" data-feed-sort="date_asc" title="Más antiguos primero">▲ Fecha ascendente</button>
+              <button type="button" class="chip" data-feed-sort="score_desc" title="Mayor puntaje primero">🔥 Mayor score</button>
+            </div>
           </div>
 
           <!-- Feed Items -->
@@ -184,6 +185,110 @@
           </div>
         </div>
 
+      </div>
+
+      <!-- Indicador flotante de Mes y Año al desplazarse (estilo Google Photos) -->
+      <div id="feedScrollDatePill" class="feed-scroll-date-pill" aria-hidden="true"></div>
+    </section>
+
+    <!-- ================================================================= -->
+    <!-- SECCIÓN 2: PERFIL DE USUARIO                                      -->
+    <!-- ================================================================= -->
+    <section id="sectionProfile" class="section-view hidden" aria-label="Ficha de usuario">
+      <div class="profile-container">
+        <div class="profile-nav-bar">
+          <button type="button" id="backBtn" class="btn btn-secondary back-nav-btn">
+            ← <span id="backBtnText">Volver</span>
+          </button>
+        </div>
+
+        <header class="user-hero-card">
+          <div class="user-hero-main">
+            <div class="avatar" id="userAvatar">U</div>
+            <div class="user-hero-titles" style="flex:1;">
+              <div class="username-row">
+                <h2 id="userName">u/usuario</h2>
+                <a id="redditProfileLink" href="#" target="_blank" rel="noopener noreferrer" class="external-link">
+                  Abrir en Reddit ↗
+                </a>
+              </div>
+              <p class="user-activity-dates" id="userDates">Actividad registrada: - hasta -</p>
+            </div>
+            <div class="profile-sub-filter-box">
+              <span class="profile-sub-filter-label">Filtrar perfil por subreddit:</span>
+              <div class="multi-select-wrap" id="profileSubMultiWrap">
+                <button type="button" id="profileSubMultiBtn" class="multi-select-btn" aria-expanded="false" aria-haspopup="listbox">
+                  <span id="profileSubMultiLabel">Todos los subreddits</span>
+                  <span aria-hidden="true">▾</span>
+                </button>
+                <div id="profileSubMultiPanel" class="multi-select-panel hidden" role="listbox" aria-multiselectable="true">
+                  <div class="multi-select-actions">
+                    <button type="button" id="profileSubsAllBtn" class="link-btn">Todos</button>
+                    <span class="link-btn-sep">·</span>
+                    <button type="button" id="profileSubsNoneBtn" class="link-btn">Ninguno</button>
+                  </div>
+                  <div id="profileSubCheckboxes" class="multi-select-list"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="metrics-grid">
+            <div class="metric-card">
+              <span class="metric-label">Score Total</span>
+              <span class="metric-value highlight-score" id="metricScore">0</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Total Actividades</span>
+              <span class="metric-value" id="metricTotal">0</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Posts</span>
+              <span class="metric-value highlight-posts" id="metricPosts">0</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Comentarios</span>
+              <span class="metric-value highlight-comments" id="metricComments">0</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Promedio / Ítem</span>
+              <span class="metric-value" id="metricAvg">0</span>
+            </div>
+          </div>
+          <div class="user-tags-section">
+            <div class="tags-group">
+              <span class="tags-label">Subreddits activos:</span>
+              <div class="pills-container" id="userSubreddits"></div>
+              <span id="profileFilterNotice" class="badge badge-filter-notice hidden"></span>
+            </div>
+            <div class="tags-group">
+              <span class="tags-label">Flairs:</span>
+              <div class="pills-container" id="userFlairs"></div>
+            </div>
+          </div>
+        </header>
+
+        <!-- Controles del Timeline (mismo estilo de barra que el Feed) -->
+        <div class="timeline-controls-bar feed-toolbar">
+          <div class="timeline-title-wrap">
+            <h3>Línea de Tiempo</h3>
+            <span class="feed-toolbar-count" id="timelineCount">0 ítems</span>
+          </div>
+          <div class="timeline-actions-wrap">
+            <div class="feed-sort-chips" role="group" aria-label="Orden de la línea de tiempo">
+              <button type="button" class="chip active" data-timeline-sort="desc" title="Más recientes primero">▼ Fecha descendente</button>
+              <button type="button" class="chip" data-timeline-sort="asc" title="Más antiguos primero">▲ Fecha ascendente</button>
+              <button type="button" class="chip" data-timeline-sort="score" title="Mayor puntaje primero">🔥 Mayor score</button>
+            </div>
+            <span class="toolbar-sep" aria-hidden="true"></span>
+            <div class="timeline-filters">
+              <button type="button" class="chip active" data-type="all">Todos</button>
+              <button type="button" class="chip chip-post" data-type="post">📝 Posts</button>
+              <button type="button" class="chip chip-comment" data-type="comentario">💬 Comentarios</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="timeline-feed" id="timelineFeed"></div>
       </div>
     </section>
 
@@ -229,6 +334,94 @@
       <a id="dialogRedditLink" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-primary">
         Ver en Reddit ↗
       </a>
+    </div>
+  </dialog>
+
+  <!-- Modal Amplio de Armado y Configuración del Feed (Primera interacción al iniciar) -->
+  <dialog id="feedBuilderDialog" class="feed-builder-dialog" aria-labelledby="feedBuilderTitle">
+    <div class="feed-builder-header">
+      <div>
+        <h2 id="feedBuilderTitle">🗂️ Armar Feed</h2>
+        <p class="feed-builder-subtitle">Cargá tu archivo JSON, elegí comunidades, rango de fechas y orden inicial para generar la vista.</p>
+      </div>
+      <button type="button" class="btn-close" id="feedBuilderCloseBtn" aria-label="Cerrar configurador">✕</button>
+    </div>
+
+    <!-- Paso 1: Carga de archivo JSON (siempre habilitado) -->
+    <div id="feedBuilderFileBar" class="feed-builder-filebar">
+      <div class="feed-builder-fileinfo">
+        <span class="feed-builder-step-badge">Paso 1</span>
+        <div>
+          <strong id="feedBuilderFileStatus">Sin archivo cargado</strong>
+          <p id="feedBuilderFileHint" class="feed-builder-filehint">Seleccioná un archivo <code>perfiles_usuarios.json</code> para desbloquear los filtros.</p>
+        </div>
+      </div>
+      <button type="button" id="feedBuilderUploadBtn" class="btn btn-primary">
+        📂 Cargar JSON
+      </button>
+    </div>
+
+    <!-- Paso 2: Formulario de filtros (grisado/deshabilitado hasta cargar JSON) -->
+    <fieldset id="feedBuilderFieldset" class="feed-builder-fieldset" disabled>
+      <div class="feed-builder-step-row">
+        <span class="feed-builder-step-badge">Paso 2</span>
+        <span class="feed-builder-step-label">Personalizá la vista antes de generar el Feed</span>
+      </div>
+
+      <div class="feed-builder-grid">
+        <!-- Columna Izquierda: Comunidades -->
+        <div class="feed-builder-col">
+          <div class="sidebar-block-header">
+            <h4 class="sidebar-block-label">Comunidades</h4>
+            <div class="sidebar-block-actions">
+              <button type="button" id="subsSelectAll" class="link-btn">Todas</button>
+              <span class="link-btn-sep">·</span>
+              <button type="button" id="subsSelectNone" class="link-btn">Ninguna</button>
+            </div>
+          </div>
+          <div id="subCheckboxList" class="sub-checkbox-list feed-builder-sublist">
+            <p class="sidebar-empty-hint">Cargá un archivo JSON para ver las comunidades disponibles.</p>
+          </div>
+        </div>
+
+        <!-- Columna Derecha: Fechas y Orden -->
+        <div class="feed-builder-col feed-builder-col-right">
+          <div>
+            <h4 class="sidebar-block-label">Rango de fechas (ART)</h4>
+            <div class="date-range-fields">
+              <div class="date-field">
+                <label for="feedDateFrom">Desde</label>
+                <input type="date" id="feedDateFrom" class="date-input">
+              </div>
+              <div class="date-field">
+                <label for="feedDateTo">Hasta</label>
+                <input type="date" id="feedDateTo" class="date-input">
+              </div>
+            </div>
+            <button type="button" id="clearDatesBtn" class="link-btn mt-sm">✕ Limpiar fechas</button>
+          </div>
+
+          <div>
+            <label for="feedSortSelect" class="sidebar-block-label">Ordenar por</label>
+            <select id="feedSortSelect" class="sidebar-select">
+              <option value="date_desc" selected>▼ Más recientes primero</option>
+              <option value="date_asc">▲ Más antiguos primero</option>
+              <option value="score_desc">🔥 Mayor score</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </fieldset>
+
+    <div class="feed-builder-footer">
+      <div id="feedCounterBadge" class="feed-counter-badge hidden">
+        <span id="feedItemCount">0</span> ítems encontrados
+      </div>
+      <div class="feed-builder-footer-actions">
+        <button type="button" id="applyFeedBtn" class="btn btn-primary" disabled>
+          ▶ Generar Feed
+        </button>
+      </div>
     </div>
   </dialog>
 

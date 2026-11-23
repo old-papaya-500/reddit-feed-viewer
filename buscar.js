@@ -74,6 +74,14 @@ function parseArgs() {
   return parsed;
 }
 
+function isValidDateStr(str) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(str)) return false;
+  const [y, m, d] = str.split('-').map(Number);
+  if (y < 2005 || y > 2035 || m < 1 || m > 12 || d < 1 || d > 31) return false;
+  const check = new Date(Date.UTC(y, m - 1, d));
+  return check.getUTCFullYear() === y && (check.getUTCMonth() + 1) === m && check.getUTCDate() === d;
+}
+
 // Pregunta por consola para modo interactivo
 function ask(rl, promptText, defaultValue = '') {
   return new Promise(resolve => {
@@ -82,6 +90,15 @@ function ask(rl, promptText, defaultValue = '') {
       resolve(answer.trim() || defaultValue);
     });
   });
+}
+
+async function askValidated(rl, promptText, defaultValue, validator, errorMsg) {
+  while (true) {
+    const raw = await ask(rl, promptText, defaultValue);
+    const parsed = validator(raw);
+    if (parsed !== null && parsed !== undefined) return parsed;
+    console.log(`  ❌ Valor inválido ("${raw}"). ${errorMsg}`);
+  }
 }
 
 async function fetchWithRetry(url, maxRetries = 10) {
@@ -188,30 +205,74 @@ async function main() {
     console.log('       Buscador Universal de Publicaciones Reddit       ');
     console.log('========================================================\n');
 
-    subreddit = await ask(rl, 'Subreddit a consultar', 'argentina');
-    subreddit = subreddit.replace(/^r\//, ''); // Quita 'r/' si el usuario lo pone
+    subreddit = await askValidated(
+      rl,
+      'Subreddit a consultar',
+      'argentina',
+      (v) => {
+        const clean = v.replace(/^r\//i, '').trim();
+        return /^[a-zA-Z0-9_]+$/.test(clean) ? clean : null;
+      },
+      'Usá solo letras, números o guion bajo (ej: argentina).'
+    );
 
     console.log('\nSeleccioná el modo de búsqueda temporal:');
     console.log('  1) Mes y año completo (ej: Enero 2026)');
     console.log('  2) Rango de fechas (desde / hasta)');
     console.log('  3) Un día específico (ej: 2026-01-15)');
-    const opcion = await ask(rl, 'Opción [1-3]', '1');
+    const opcion = await askValidated(
+      rl,
+      'Opción [1-3]',
+      '1',
+      (v) => (['1', '2', '3'].includes(v) ? v : null),
+      'Elegí 1, 2 o 3.'
+    );
 
     if (opcion === '1') {
-      const mes = await ask(rl, 'Número de mes (1 a 12)', '1');
-      const anio = await ask(rl, 'Año (YYYY)', '2026');
+      const mes = await askValidated(
+        rl,
+        'Número de mes (1 a 12)',
+        '1',
+        (v) => (/^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 12 ? Number(v) : null),
+        'Ingresá un número entre 1 y 12.'
+      );
+      const anio = await askValidated(
+        rl,
+        'Año (YYYY)',
+        '2026',
+        (v) => (/^\d{4}$/.test(v) && Number(v) >= 2005 && Number(v) <= 2035 ? Number(v) : null),
+        'Ingresá un año válido de 4 dígitos (2005-2035).'
+      );
       const mesStr = String(mes).padStart(2, '0');
       startUnix = parseArtToUnix(`${anio}-${mesStr}-01`, false);
       endUnix = parseArtToUnix(`${anio}-${mesStr}`, true);
       outputBase = `${subreddit}_${anio}_${mesStr}`;
     } else if (opcion === '2') {
-      const desde = await ask(rl, 'Fecha desde (YYYY-MM-DD)', '2026-01-01');
-      const hasta = await ask(rl, 'Fecha hasta (YYYY-MM-DD)', '2026-01-31');
+      const desde = await askValidated(
+        rl,
+        'Fecha desde (YYYY-MM-DD)',
+        '2026-01-01',
+        (v) => (isValidDateStr(v) ? v : null),
+        'Ingresá una fecha válida en formato YYYY-MM-DD.'
+      );
       startUnix = parseArtToUnix(desde, false);
+      const hasta = await askValidated(
+        rl,
+        'Fecha hasta (YYYY-MM-DD)',
+        '2026-01-31',
+        (v) => (isValidDateStr(v) && parseArtToUnix(v, true) >= startUnix ? v : null),
+        `Ingresá una fecha válida YYYY-MM-DD igual o posterior a ${desde}.`
+      );
       endUnix = parseArtToUnix(hasta, true);
       outputBase = `${subreddit}_${desde}_a_${hasta}`;
     } else if (opcion === '3') {
-      const dia = await ask(rl, 'Fecha específica (YYYY-MM-DD)', '2026-01-01');
+      const dia = await askValidated(
+        rl,
+        'Fecha específica (YYYY-MM-DD)',
+        '2026-01-01',
+        (v) => (isValidDateStr(v) ? v : null),
+        'Ingresá una fecha válida en formato YYYY-MM-DD.'
+      );
       startUnix = parseArtToUnix(dia, false);
       endUnix = parseArtToUnix(dia, true);
       outputBase = `${subreddit}_${dia}`;

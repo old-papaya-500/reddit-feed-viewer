@@ -45,6 +45,7 @@ Uso de scrapear_comentarios.js:
 
 Opciones disponibles:
   --input <archivo>   Ruta al archivo JSON de publicaciones a procesar (ej: argentina_2026_01.json)
+  --lite              Modo ligero (solo interacciones sin texto/body; ahorra ~70% de espacio, ideal para grafos)
   --out <archivo>     Ruta o nombre del archivo JSON de salida (por defecto: <archivo>_comentarios.json)
   --limit <num>       Límite opcional de publicaciones a procesar (ideal para pruebas rápidas)
   --help, -h          Muestra este mensaje de ayuda
@@ -89,6 +90,15 @@ function ask(rl, promptText, defaultValue = '') {
       resolve(answer.trim() || defaultValue);
     });
   });
+}
+
+async function askValidated(rl, promptText, defaultValue, validator, errorMsg) {
+  while (true) {
+    const raw = await ask(rl, promptText, defaultValue);
+    const parsed = validator(raw);
+    if (parsed !== null && parsed !== undefined) return parsed;
+    console.log(`  ❌ Valor inválido ("${raw}"). ${errorMsg}`);
+  }
 }
 
 // Petición HTTP con reintentos y backoff exponencial ante 422, 429 o 5xx
@@ -155,7 +165,7 @@ function extractCommentMediaUrls(node) {
 }
 
 // Recorrido recursivo del árbol de comentarios
-function flattenCommentTree(nodes, depth = 0, postPermalink = '') {
+function flattenCommentTree(nodes, depth = 0, postPermalink = '', liteMode = false) {
   const flattened = [];
   if (!Array.isArray(nodes)) return flattened;
 
@@ -176,7 +186,6 @@ function flattenCommentTree(nodes, depth = 0, postPermalink = '') {
       ? (node.permalink.startsWith('http') ? node.permalink : `https://www.reddit.com${node.permalink}`)
       : (postPermalink ? `${postPermalink.replace(/\/$/, '')}/comment/${node.id}/` : '');
 
-    const mediaUrls = extractCommentMediaUrls(node);
     const commentObj = {
       id: node.id,
       parent_id: node.parent_id || '',
@@ -185,11 +194,16 @@ function flattenCommentTree(nodes, depth = 0, postPermalink = '') {
       score: typeof node.score === 'number' ? node.score : 0,
       created_utc: node.created_utc || 0,
       date_art: dateArt,
-      body: node.body || '',
       permalink: commentPermalink
     };
-    if (mediaUrls.length > 0) {
-      commentObj.media_urls = mediaUrls;
+    if (liteMode) {
+      commentObj.lite = true;
+    } else {
+      commentObj.body = node.body || '';
+      const mediaUrls = extractCommentMediaUrls(node);
+      if (mediaUrls.length > 0) {
+        commentObj.media_urls = mediaUrls;
+      }
     }
     flattened.push(commentObj);
 
@@ -205,7 +219,7 @@ function flattenCommentTree(nodes, depth = 0, postPermalink = '') {
       }
 
       if (childNodes.length > 0) {
-        const childComments = flattenCommentTree(childNodes, depth + 1, postPermalink);
+        const childComments = flattenCommentTree(childNodes, depth + 1, postPermalink, liteMode);
         flattened.push(...childComments);
       }
     }
@@ -267,6 +281,7 @@ async function main() {
   let inputFile = cliArgs.input;
   let outputFile = cliArgs.out;
   let limit = cliArgs.limit ? parseInt(cliArgs.limit, 10) : 0;
+  let liteMode = Boolean(cliArgs.lite || cliArgs['solo-interacciones']);
 
   // Si no se pasó --input, ejecutar modo interactivo
   if (!inputFile) {
@@ -279,21 +294,45 @@ async function main() {
     const currentFiles = discoverPostJsonFiles();
 
     if (currentFiles.length === 0) {
-      console.log('No se encontraron archivos .json de publicaciones en el directorio actual.');
-      inputFile = await ask(rl, 'Ingresá la ruta del archivo JSON con los posteos');
+      console.log('No se encontraron archivos .json de publicaciones en el directorio actual ni en resultados/.');
+      inputFile = await askValidated(
+        rl,
+        'Ingresá la ruta del archivo JSON con los posteos',
+        '',
+        (v) => (v && fs.existsSync(v) ? v : null),
+        'El archivo indicado no existe. Verificá la ruta.'
+      );
     } else {
       console.log('Archivos de posteos disponibles detectados:');
       currentFiles.forEach((f, idx) => {
         console.log(`  ${idx + 1}) ${f}`);
       });
-      const seleccion = await ask(rl, `Elegí un archivo [1-${currentFiles.length}] o escribí la ruta`, '1');
-      const idx = parseInt(seleccion, 10) - 1;
-      if (!isNaN(idx) && currentFiles[idx]) {
-        inputFile = currentFiles[idx];
-      } else {
-        inputFile = seleccion;
-      }
+      inputFile = await askValidated(
+        rl,
+        `Elegí un archivo [1-${currentFiles.length}] o escribí la ruta`,
+        '1',
+        (v) => {
+          if (/^\d+$/.test(v)) {
+            const idx = parseInt(v, 10) - 1;
+            return currentFiles[idx] || null;
+          }
+          return fs.existsSync(v) ? v : null;
+        },
+        `Elegí un número entre 1 y ${currentFiles.length} o una ruta existente.`
+      );
     }
+    liteMode = await askValidated(
+      rl,
+      '¿Modo ligero (solo interacciones sin texto, ahorra ~70% de espacio)? [s/N]',
+      'N',
+      (v) => {
+        const n = v.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        if (['s', 'si', 'y', 'yes'].includes(n)) return true;
+        if (['n', 'no'].includes(n)) return false;
+        return null;
+      },
+      'Ingresá S (sí) o N (no).'
+    );
     rl.close();
   }
 
@@ -420,7 +459,7 @@ async function main() {
 
     const json = await fetchWithRetry(url);
     const treeData = (json && Array.isArray(json.data)) ? json.data : [];
-    const flattenedComments = flattenCommentTree(treeData, 0, post.permalink);
+    const flattenedComments = flattenCommentTree(treeData, 0, post.permalink, liteMode);
 
     const item = {
       post_id: post.id,
