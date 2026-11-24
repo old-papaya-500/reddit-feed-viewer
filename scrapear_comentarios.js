@@ -1,17 +1,19 @@
 #!/usr/bin/env node
-// scrapear_comentarios.js - Extractor de Árbol Completo de Comentarios de Reddit
+// scrapear_comentarios.js - Extractor Concurrente de Comentarios de Reddit
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 
-const USER_AGENT = 'reddit-comment-researcher/1.0 (pure nodejs)';
-const BASE_DELAY_MS = 1800; // Respetar rate limits de Arctic Shift
+const USER_AGENT = 'reddit-comment-researcher-parallel/1.0 (pure nodejs)';
+const DEFAULT_CONCURRENCY = 3;
+const MAX_CONCURRENCY = 20;
+const PER_WORKER_DELAY_MS = 1400; // Pausa prudente por cada hilo
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Parseador de argumentos de línea de comandos (--clave valor)
+// Parseador de argumentos de línea de comandos
 function parseArgs() {
   const args = process.argv.slice(2);
   const parsed = {};
@@ -23,6 +25,15 @@ function parseArgs() {
       const key = arg.slice(2);
       const next = args[i + 1];
       if (next && !next.startsWith('--')) {
+        parsed[key] = next;
+        i++;
+      } else {
+        parsed[key] = true;
+      }
+    } else if (arg.startsWith('-')) {
+      const key = arg.slice(1);
+      const next = args[i + 1];
+      if (next && !next.startsWith('-')) {
         parsed[key] = next;
         i++;
       } else {
@@ -44,11 +55,12 @@ Uso de scrapear_comentarios.js:
      node scrapear_comentarios.js --input <archivo_posts.json> [opciones]
 
 Opciones disponibles:
-  --input <archivo>   Ruta al archivo JSON de publicaciones a procesar (ej: argentina_2026_01.json)
-  --lite              Modo ligero (solo interacciones sin texto/body; ahorra ~70% de espacio, ideal para grafos)
-  --out <archivo>     Ruta o nombre del archivo JSON de salida (por defecto: <archivo>_comentarios.json)
-  --limit <num>       Límite opcional de publicaciones a procesar (ideal para pruebas rápidas)
-  --help, -h          Muestra este mensaje de ayuda
+  --input <archivo>        Ruta al archivo JSON de publicaciones (ej: argentina_2026_01.json)
+  --concurrency, -c <num>  Cantidad de hilos en paralelo (por defecto: ${DEFAULT_CONCURRENCY}, máx: ${MAX_CONCURRENCY})
+  --lite                   Modo ligero (solo interacciones sin texto/body; ahorra ~70% de espacio, ideal para grafos)
+  --out <archivo>          Ruta o nombre del archivo JSON de salida
+  --limit <num>            Límite opcional de publicaciones a procesar (para pruebas rápidas)
+  --help, -h               Muestra este mensaje de ayuda
 `);
 }
 
@@ -82,7 +94,6 @@ function discoverPostJsonFiles() {
   return found;
 }
 
-// Pregunta interactiva por consola
 function ask(rl, promptText, defaultValue = '') {
   return new Promise(resolve => {
     const prompt = defaultValue ? `${promptText} [por defecto: ${defaultValue}]: ` : `${promptText}: `;
@@ -101,7 +112,7 @@ async function askValidated(rl, promptText, defaultValue, validator, errorMsg) {
   }
 }
 
-// Petición HTTP con reintentos y backoff exponencial ante 422, 429 o 5xx
+// Petición HTTP con reintentos y retroceso exponencial
 async function fetchWithRetry(url, maxRetries = 10) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
@@ -110,11 +121,10 @@ async function fetchWithRetry(url, maxRetries = 10) {
         return await res.json();
       }
       if (res.status === 404) {
-        // Post no encontrado o sin datos en el archivo
         return { data: [] };
       }
       if (res.status === 422 || res.status === 429 || res.status >= 500) {
-        const wait = Math.min(attempt * 8, 60);
+        const wait = Math.min(attempt * 6, 45);
         console.warn(`  [HTTP ${res.status}] Enfriando y reintentando en ${wait}s (intento ${attempt}/${maxRetries})...`);
         await sleep(wait * 1000);
         continue;
@@ -122,7 +132,7 @@ async function fetchWithRetry(url, maxRetries = 10) {
       console.warn(`  [HTTP ${res.status}] Error no recuperable al consultar ${url}`);
       return null;
     } catch (err) {
-      const wait = Math.min(attempt * 8, 60);
+      const wait = Math.min(attempt * 6, 45);
       console.warn(`  [Red: ${err.message}] Reintentando en ${wait}s...`);
       await sleep(wait * 1000);
     }
@@ -171,7 +181,6 @@ function flattenCommentTree(nodes, depth = 0, postPermalink = '', liteMode = fal
 
   for (const item of nodes) {
     if (!item) continue;
-    // En la API de Reddit/Arctic Shift, los nodos pueden venir directamente o envueltos en item.data
     const node = item.data || item;
     if (!node || !node.id) continue;
 
@@ -196,6 +205,7 @@ function flattenCommentTree(nodes, depth = 0, postPermalink = '', liteMode = fal
       date_art: dateArt,
       permalink: commentPermalink
     };
+
     if (liteMode) {
       commentObj.lite = true;
     } else {
@@ -207,7 +217,6 @@ function flattenCommentTree(nodes, depth = 0, postPermalink = '', liteMode = fal
     }
     flattened.push(commentObj);
 
-    // Procesar respuestas anidadas (replies)
     if (node.replies) {
       let childNodes = [];
       if (Array.isArray(node.replies)) {
@@ -257,17 +266,140 @@ async function enrichMissingSelftext(postsData, processedMap) {
   }
 }
 
-// Escritura en streaming de un array JSON para soportar archivos >512 MB sin RangeError
-async function writeJsonArrayStream(filePath, items) {
-  const ws = fs.createWriteStream(filePath, { encoding: 'utf-8' });
-  ws.write('[\n');
-  for (let i = 0; i < items.length; i++) {
-    const isLast = i === items.length - 1;
-    const ok = ws.write('  ' + JSON.stringify(items[i]) + (isLast ? '\n' : ',\n'));
-    if (!ok) await new Promise(resolve => ws.once('drain', resolve));
-  }
-  ws.write(']\n');
+// Recorre un array JSON en streaming objeto por objeto (soporta archivos >512 MB sin RangeError)
+function streamJsonArrayObjects(filePath, onObject) {
+  return new Promise((resolve, reject) => {
+    const stream = fs.createReadStream(filePath, { encoding: 'utf-8', highWaterMark: 256 * 1024 });
+    let inString = false;
+    let escapeNext = false;
+    const stack = [];
+    let capturing = false;
+    let captureDepth = -1;
+    let chunks = [];
+
+    stream.on('data', chunk => {
+      let sliceStart = capturing ? 0 : -1;
+      for (let i = 0; i < chunk.length; i++) {
+        const ch = chunk[i];
+        if (escapeNext) { escapeNext = false; continue; }
+        if (inString) {
+          if (ch === '\\') escapeNext = true;
+          else if (ch === '"') inString = false;
+          continue;
+        }
+        if (ch === '"') {
+          inString = true;
+        } else if (ch === '{' || ch === '[') {
+          stack.push(ch);
+          if (!capturing && ch === '{' && stack.length === 2 && stack[0] === '[') {
+            capturing = true;
+            captureDepth = 2;
+            chunks = [];
+            sliceStart = i;
+          }
+        } else if (ch === '}' || ch === ']') {
+          if (capturing && ch === '}' && stack.length === captureDepth) {
+            chunks.push(chunk.slice(sliceStart, i + 1));
+            try {
+              onObject(JSON.parse(chunks.join('')));
+            } catch (_) {}
+            capturing = false;
+            captureDepth = -1;
+            chunks = [];
+            sliceStart = -1;
+          }
+          stack.pop();
+        }
+      }
+      if (capturing && sliceStart !== -1) {
+        chunks.push(chunk.slice(sliceStart));
+      }
+    });
+
+    stream.on('end', () => resolve());
+    stream.on('error', err => reject(err));
+  });
+}
+
+// Migra un checkpoint heredado .json (potencialmente >400 MB) al nuevo formato append-only .jsonl
+async function migrateLegacyCheckpoint(legacyFile, jsonlFile) {
+  console.log(`\n[Migración automática]: Convirtiendo checkpoint legado "${legacyFile}" a formato streaming (.jsonl)...`);
+  const ws = fs.createWriteStream(jsonlFile, { flags: 'a', encoding: 'utf-8' });
+  let migrated = 0;
+  await streamJsonArrayObjects(legacyFile, item => {
+    if (item && item.post_id) {
+      ws.write(JSON.stringify(item) + '\n');
+      migrated++;
+    }
+  });
   await new Promise(resolve => ws.end(resolve));
+  try { fs.unlinkSync(legacyFile); } catch (_) {}
+  console.log(`[Migración completa]: ${migrated.toLocaleString()} publicaciones preservadas sin pérdida.`);
+}
+
+// Carga los IDs ya procesados desde el checkpoint .jsonl línea por línea (uso mínimo de RAM)
+async function loadJsonlCheckpointIds(jsonlFile) {
+  const processedIds = new Set();
+  let totalCommentsCount = 0;
+  if (!fs.existsSync(jsonlFile)) return { processedIds, totalCommentsCount };
+
+  const rl = readline.createInterface({
+    input: fs.createReadStream(jsonlFile, { encoding: 'utf-8' }),
+    crlfDelay: Infinity
+  });
+
+  for await (const line of rl) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const obj = JSON.parse(trimmed);
+      if (obj && obj.post_id && !processedIds.has(obj.post_id)) {
+        processedIds.add(obj.post_id);
+        totalCommentsCount += obj.comments_obtenidos || (Array.isArray(obj.comments) ? obj.comments.length : 0);
+      }
+    } catch (_) {
+      // Ignorar última línea truncada si hubo un corte brusco de energía
+    }
+  }
+  return { processedIds, totalCommentsCount };
+}
+
+// Convierte el checkpoint .jsonl en el archivo JSON array final mediante streaming (sin límite de 512 MB ni RAM)
+async function convertJsonlToJsonArrayStream(jsonlFile, outputFile) {
+  const ws = fs.createWriteStream(outputFile, { encoding: 'utf-8' });
+  ws.write('[\n');
+
+  const rl = readline.createInterface({
+    input: fs.createReadStream(jsonlFile, { encoding: 'utf-8' }),
+    crlfDelay: Infinity
+  });
+
+  const seenIds = new Set();
+  let written = 0;
+
+  for await (const line of rl) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let postId = null;
+    try {
+      const obj = JSON.parse(trimmed);
+      postId = obj && obj.post_id;
+    } catch (_) {
+      continue;
+    }
+    if (!postId || seenIds.has(postId)) continue;
+    seenIds.add(postId);
+
+    const prefix = written === 0 ? '  ' : ',\n  ';
+    if (!ws.write(prefix + trimmed)) {
+      await new Promise(resolve => ws.once('drain', resolve));
+    }
+    written++;
+  }
+
+  ws.write('\n]\n');
+  await new Promise(resolve => ws.end(resolve));
+  return written;
 }
 
 async function main() {
@@ -282,15 +414,21 @@ async function main() {
   let outputFile = cliArgs.out;
   let limit = cliArgs.limit ? parseInt(cliArgs.limit, 10) : 0;
   let liteMode = Boolean(cliArgs.lite || cliArgs['solo-interacciones']);
+  let concurrency = parseInt(cliArgs.concurrency || cliArgs.c || DEFAULT_CONCURRENCY, 10);
 
-  // Si no se pasó --input, ejecutar modo interactivo
+  if (isNaN(concurrency) || concurrency < 1) concurrency = DEFAULT_CONCURRENCY;
+  if (concurrency > MAX_CONCURRENCY) {
+    console.warn(`[Aviso]: Concurrencia de ${concurrency} limitada a ${MAX_CONCURRENCY} para evitar rate-limits de Arctic Shift.`);
+    concurrency = MAX_CONCURRENCY;
+  }
+
+  // Modo interactivo si no se pasó --input
   if (!inputFile) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     console.log('========================================================');
-    console.log('       Scraper de Árbol de Comentarios de Reddit        ');
+    console.log('  Scraper Concurrente de Comentarios de Reddit (Paralelo)');
     console.log('========================================================\n');
 
-    // Buscar archivos JSON existentes en el directorio actual y en resultados/
     const currentFiles = discoverPostJsonFiles();
 
     if (currentFiles.length === 0) {
@@ -321,6 +459,14 @@ async function main() {
         `Elegí un número entre 1 y ${currentFiles.length} o una ruta existente.`
       );
     }
+
+    concurrency = await askValidated(
+      rl,
+      `Hilos de consulta en paralelo [1-${MAX_CONCURRENCY}]`,
+      String(DEFAULT_CONCURRENCY),
+      (v) => (/^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= MAX_CONCURRENCY ? Number(v) : null),
+      `Ingresá un número entero entre 1 y ${MAX_CONCURRENCY}.`
+    );
     liteMode = await askValidated(
       rl,
       '¿Modo ligero (solo interacciones sin texto, ahorra ~70% de espacio)? [s/N]',
@@ -341,11 +487,16 @@ async function main() {
     process.exit(1);
   }
 
-  // Leer y validar archivo de posts
-  let postsData;
+  let postsData = [];
   try {
-    const raw = fs.readFileSync(inputFile, 'utf-8');
-    postsData = JSON.parse(raw);
+    const fSize = fs.statSync(inputFile).size;
+    if (fSize >= 250 * 1024 * 1024) {
+      console.log(`Leyendo archivo de entrada grande en streaming (${(fSize / (1024 * 1024)).toFixed(1)} MB)...`);
+      await streamJsonArrayObjects(inputFile, obj => postsData.push(obj));
+    } else {
+      const raw = fs.readFileSync(inputFile, 'utf-8');
+      postsData = JSON.parse(raw);
+    }
     if (!Array.isArray(postsData)) {
       throw new Error('El JSON no contiene un array de publicaciones.');
     }
@@ -359,7 +510,6 @@ async function main() {
     postsData = postsData.slice(0, limit);
   }
 
-  // Nombre de salida y checkpoint dentro de la misma carpeta del archivo de entrada
   const parsedPath = path.parse(inputFile);
   const baseName = parsedPath.name;
   const inputDir = parsedPath.dir || '.';
@@ -367,31 +517,37 @@ async function main() {
     outputFile = path.join(inputDir, `${baseName}_comentarios.json`);
   }
 
-  const checkpointFile = path.join(inputDir, `.${baseName}_comentarios_checkpoint.json`);
+  // Checkpoint append-only en formato JSONL (O(1) por post, soporta millones de comentarios sin límite de 512 MB)
+  const legacyCheckpointFile = path.join(inputDir, `.${baseName}_comentarios_checkpoint.json`);
+  const checkpointFile = path.join(inputDir, `.${baseName}_comentarios_checkpoint.jsonl`);
 
-  // Cargar checkpoint si existe
-  let processedMap = new Map();
-  if (fs.existsSync(checkpointFile)) {
-    try {
-      const cpRaw = fs.readFileSync(checkpointFile, 'utf-8');
-      const cpList = JSON.parse(cpRaw);
-      if (Array.isArray(cpList)) {
-        for (const item of cpList) {
-          processedMap.set(item.post_id, item);
-        }
-        console.log(`\n[Checkpoint detectado]: Se reanudan ${processedMap.size} publicaciones ya procesadas previamente.`);
-      }
-    } catch (e) {
-      console.warn(`Aviso: No se pudo leer el checkpoint anterior (${e.message}). Comenzando desde cero.`);
-    }
+  if (fs.existsSync(legacyCheckpointFile)) {
+    await migrateLegacyCheckpoint(legacyCheckpointFile, checkpointFile);
   }
 
-  // Manejo de interrupción (Ctrl+C) para guardar checkpoint antes de salir
+  const loadedCp = await loadJsonlCheckpointIds(checkpointFile);
+  const processedIds = loadedCp.processedIds;
+  let totalCommentsCount = loadedCp.totalCommentsCount;
+
+  if (processedIds.size > 0) {
+    console.log(`\n[Checkpoint detectado]: Se reanudan ${processedIds.size.toLocaleString()} publicaciones ya procesadas previamente (${totalCommentsCount.toLocaleString()} comentarios).`);
+  }
+
+  // Stream de escritura incremental (append-only) para el checkpoint .jsonl
+  const cpFd = fs.openSync(checkpointFile, 'a');
+  let stopping = false;
+
+  function appendCheckpointItem(item) {
+    fs.writeSync(cpFd, JSON.stringify(item) + '\n', null, 'utf-8');
+    processedIds.add(item.post_id);
+  }
+
+  // Manejador de salida limpia con Ctrl+C (todo lo procesado ya está persistido línea a línea)
   const handleExit = () => {
-    if (processedMap.size > 0 && processedMap.size < postsData.length) {
-      fs.writeFileSync(checkpointFile, JSON.stringify(Array.from(processedMap.values()), null, 2), 'utf-8');
-      console.log(`\n[Pausa]: Progreso guardado en "${checkpointFile}" (${processedMap.size}/${postsData.length} posts). Podés reanudar en cualquier momento.`);
-    }
+    if (stopping) return;
+    stopping = true;
+    try { fs.closeSync(cpFd); } catch (_) {}
+    console.log(`\n[Pausa]: Progreso guardado en "${checkpointFile}" (${processedIds.size.toLocaleString()}/${postsData.length.toLocaleString()} posts). Podés reanudar en cualquier momento.`);
     process.exit(0);
   };
   process.on('SIGINT', handleExit);
@@ -399,38 +555,66 @@ async function main() {
 
   console.log('\n========================================================');
   console.log(`Archivo de entrada: ${inputFile}`);
-  console.log(`Total de publicaciones a evaluar: ${postsData.length}`);
+  console.log(`Publicaciones a procesar: ${postsData.length.toLocaleString()} (${processedIds.size.toLocaleString()} ya en checkpoint)`);
+  console.log(`Hilos concurrentes (Workers): ${concurrency}`);
+  console.log(`Modo de extracción: ${liteMode ? 'LIGERO (solo interacciones sin body; el visor carga texto online a demanda)' : 'COMPLETO (con texto y media_urls)'}`);
+  console.log(`Checkpoint streaming: ${checkpointFile}`);
   console.log(`Archivo de salida: ${outputFile}`);
   console.log('========================================================\n');
 
   // Asegurar que todos los posts pendientes tengan su selftext (cuerpo de texto)
-  await enrichMissingSelftext(postsData, processedMap);
+  await enrichMissingSelftext(postsData, processedIds);
 
-  let processedCount = processedMap.size;
-  let totalCommentsCount = 0;
-  for (const item of processedMap.values()) {
-    totalCommentsCount += item.comments ? item.comments.length : 0;
-  }
+  let nextIndex = 0;
 
-  const results = [];
-  let callsMade = 0;
+  // Función que ejecuta cada Worker en paralelo
+  async function worker(workerId) {
+    while (!stopping) {
+      const i = nextIndex++;
+      if (i >= postsData.length) break;
 
-  for (let i = 0; i < postsData.length; i++) {
-    const post = postsData[i];
-    const indexStr = `[${i + 1}/${postsData.length}]`;
-    const pct = (( (i + 1) / postsData.length ) * 100).toFixed(1);
+      const post = postsData[i];
+      const indexStr = `[${i + 1}/${postsData.length}]`;
+      const pct = (((i + 1) / postsData.length) * 100).toFixed(1);
 
-    // Si ya fue procesado en el checkpoint, reutilizar
-    if (processedMap.has(post.id)) {
-      results.push(processedMap.get(post.id));
-      continue;
-    }
+      // Si ya está en el checkpoint, saltear de inmediato
+      if (processedIds.has(post.id)) {
+        continue;
+      }
 
-    const declaredComments = post.num_comments || 0;
-    const postTitle = (post.title || '').replace(/[\r\n]+/g, ' ').substring(0, 60);
+      const declaredComments = post.num_comments || 0;
+      const postTitle = (post.title || '').replace(/[\r\n]+/g, ' ').substring(0, 50);
 
-    // Caso 1: El post no tiene comentarios declarados
-    if (declaredComments === 0) {
+      // Si no tiene comentarios declarados, saltear consulta HTTP
+      if (declaredComments === 0) {
+        const item = {
+          post_id: post.id,
+          post_title: post.title || '',
+          post_selftext: post.selftext || '',
+          post_permalink: post.permalink || `https://www.reddit.com/comments/${post.id}/`,
+          post_url: post.url || '',
+          post_date_utc: post.created_utc || 0,
+          post_date_art: post.date_art || '',
+          post_author: post.author || '',
+          post_score: typeof post.score === 'number' ? post.score : 0,
+          post_flair: post.flair || '',
+          num_comments_declarados: 0,
+          comments_obtenidos: 0,
+          comments: []
+        };
+        appendCheckpointItem(item);
+        console.log(`${indexStr} (${pct}%) [Hilo ${workerId}] Post ${post.id}: 0 comentarios declarados. Salteando llamada.`);
+        continue;
+      }
+
+      // Consulta HTTP al árbol de comentarios
+      const url = `https://arctic-shift.photon-reddit.com/api/comments/tree?link_id=t3_${post.id}`;
+
+      const json = await fetchWithRetry(url);
+      if (stopping) break;
+      const treeData = (json && Array.isArray(json.data)) ? json.data : [];
+      const flattenedComments = flattenCommentTree(treeData, 0, post.permalink, liteMode);
+
       const item = {
         post_id: post.id,
         post_title: post.title || '',
@@ -442,70 +626,51 @@ async function main() {
         post_author: post.author || '',
         post_score: typeof post.score === 'number' ? post.score : 0,
         post_flair: post.flair || '',
-        num_comments_declarados: 0,
-        comments_obtenidos: 0,
-        comments: []
+        num_comments_declarados: declaredComments,
+        comments_obtenidos: flattenedComments.length,
+        comments: flattenedComments
       };
-      processedMap.set(post.id, item);
-      results.push(item);
-      processedCount++;
-      console.log(`${indexStr} (${pct}%) Post ${post.id}: 0 comentarios declarados. Salteando llamada HTTP.`);
-      continue;
+
+      appendCheckpointItem(item);
+      totalCommentsCount += flattenedComments.length;
+
+      console.log(`${indexStr} (${pct}%) [Hilo ${workerId}] Post ${post.id}: ${flattenedComments.length} comentarios obtenidos (declarados: ${declaredComments}) - "${postTitle}..."`);
+
+      // Pausa prudente por hilo para evitar saturación agregada
+      await sleep(PER_WORKER_DELAY_MS);
     }
-
-    // Caso 2: El post tiene comentarios -> Consultar árbol en Arctic Shift
-    const url = `https://arctic-shift.photon-reddit.com/api/comments/tree?link_id=t3_${post.id}`;
-    callsMade++;
-
-    const json = await fetchWithRetry(url);
-    const treeData = (json && Array.isArray(json.data)) ? json.data : [];
-    const flattenedComments = flattenCommentTree(treeData, 0, post.permalink, liteMode);
-
-    const item = {
-      post_id: post.id,
-      post_title: post.title || '',
-      post_selftext: post.selftext || '',
-      post_permalink: post.permalink || `https://www.reddit.com/comments/${post.id}/`,
-      post_url: post.url || '',
-      post_date_utc: post.created_utc || 0,
-      post_date_art: post.date_art || '',
-      post_author: post.author || '',
-      post_score: typeof post.score === 'number' ? post.score : 0,
-      post_flair: post.flair || '',
-      num_comments_declarados: declaredComments,
-      comments_obtenidos: flattenedComments.length,
-      comments: flattenedComments
-    };
-
-    processedMap.set(post.id, item);
-    results.push(item);
-    processedCount++;
-    totalCommentsCount += flattenedComments.length;
-
-    console.log(`${indexStr} (${pct}%) Post ${post.id}: ${flattenedComments.length} comentarios obtenidos (declarados: ${declaredComments}) - "${postTitle}..."`);
-
-    // Guardar checkpoint cada 5 posts consultados
-    if (callsMade % 5 === 0) {
-      fs.writeFileSync(checkpointFile, JSON.stringify(Array.from(processedMap.values()), null, 2), 'utf-8');
-    }
-
-    // Pausa preventiva para respetar rate limits de Arctic Shift
-    await sleep(BASE_DELAY_MS);
   }
 
-  // Guardar archivo final mediante streaming
-  await writeJsonArrayStream(outputFile, results);
+  const startTime = Date.now();
 
-  // Limpiar checkpoint si completó exitosamente
-  if (fs.existsSync(checkpointFile) && results.length === postsData.length) {
+  // Iniciar el pool de workers en paralelo
+  const workerPromises = [];
+  for (let w = 1; w <= concurrency; w++) {
+    workerPromises.push(worker(w));
+  }
+  await Promise.all(workerPromises);
+
+  try { fs.closeSync(cpFd); } catch (_) {}
+  if (stopping) return;
+
+  const durationSec = ((Date.now() - startTime) / 1000).toFixed(1);
+
+  console.log('\n--- Generando archivo JSON final en streaming desde checkpoint (.jsonl)... ---');
+  const totalWritten = await convertJsonlToJsonArrayStream(checkpointFile, outputFile);
+
+  // Limpiar checkpoint si completó al 100%
+  if (fs.existsSync(checkpointFile) && totalWritten >= postsData.length) {
     fs.unlinkSync(checkpointFile);
   }
 
   console.log('\n========================================================');
-  console.log('EXTRACCIÓN COMPLETADA CON ÉXITO');
-  console.log(`Publicaciones procesadas: ${results.length}`);
-  console.log(`Total comentarios extraídos: ${totalCommentsCount}`);
-  console.log(`Archivo generado: ${outputFile}`);
+  console.log('       EXTRACCIÓN EN PARALELO COMPLETADA CON ÉXITO      ');
+  console.log('========================================================');
+  console.log(`Publicaciones procesadas:       ${totalWritten.toLocaleString()}`);
+  console.log(`Total comentarios extraídos:    ${totalCommentsCount.toLocaleString()}`);
+  console.log(`Hilos concurrentes utilizados:  ${concurrency}`);
+  console.log(`Tiempo total de ejecución:      ${durationSec} segundos`);
+  console.log(`Archivo generado:               ${outputFile}`);
   console.log('========================================================\n');
 }
 

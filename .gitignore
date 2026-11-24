@@ -2,6 +2,7 @@
 resultados/
 descargas/
 *.json
+*.jsonl
 *.csv
 
 # Reportes Markdown generados por buscar.js (preservar documentación del proyecto)
@@ -10,6 +11,8 @@ descargas/
 
 # Checkpoints y temporales
 .*_checkpoint.json
+.*_checkpoint.jsonl
+.shards/
 *.log
 *.tmp
 

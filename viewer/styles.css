@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Reddit Community Auditor - Estilos Modernos Web (Google Chrome Best Practices)
+   Reddit Feed Viewer - Estilos Modernos Web (Google Chrome Best Practices)
    ========================================================================== */
 
 /* 1. Tokens y Variables Globales con Soporte Nativo de Temas Claro/Oscuro */
@@ -3501,4 +3501,210 @@ dialog.feed-builder-dialog::backdrop {
   .feed-builder-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* =========================================================================
+   Omnibox: Buscados recientemente (últimos 5 + Borrar historial)
+   ========================================================================= */
+.dropdown-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem 0.25rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.dropdown-section-header .dropdown-section-label {
+  padding: 0;
+  border-bottom: none;
+}
+
+.dropdown-clear-history-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0.15rem 0.4rem;
+  border-radius: var(--radius-sm);
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.dropdown-clear-history-btn:hover {
+  color: #dc2626;
+  background-color: light-dark(rgba(220, 38, 38, 0.08), rgba(248, 113, 113, 0.14));
+}
+
+.dropdown-recent-item {
+  justify-content: space-between;
+}
+
+.dropdown-recent-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.dropdown-recent-tag {
+  margin-left: auto;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  padding: 0.1rem 0.45rem;
+  flex-shrink: 0;
+}
+
+/* =========================================================================
+   Panel Red de Ego desde Perfil (Volver + Análisis de Interacciones)
+   ========================================================================= */
+.graph-ego-only-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.85rem;
+  overflow-y: auto;
+  height: 100%;
+}
+
+.ego-only-header-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.ego-back-btn {
+  margin-bottom: 0.35rem;
+  font-weight: 600;
+}
+
+.ego-only-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.ego-breakdown-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.ego-breakdown-card h5 {
+  margin: 0;
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: var(--text-main);
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.ego-subblock {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.ego-subblock-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.ego-count-pill {
+  font-size: 0.7rem;
+  font-weight: 700;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+  color: var(--text-main);
+}
+
+.ego-breakdown-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.ego-breakdown-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  padding: 0.28rem 0.45rem;
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  font-size: 0.78rem;
+}
+
+.ego-user-link {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--primary);
+  font-weight: 600;
+  font-size: 0.78rem;
+  cursor: pointer;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 155px;
+}
+
+.ego-user-link:hover {
+  text-decoration: underline;
+}
+
+.ego-weight-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.08rem 0.4rem;
+  border-radius: 999px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.ego-badge-mutual {
+  background-color: light-dark(rgba(22, 163, 74, 0.12), rgba(74, 222, 128, 0.16));
+  color: light-dark(#15803d, #86efac);
+}
+
+.ego-badge-oneway {
+  background-color: light-dark(rgba(100, 116, 139, 0.12), rgba(148, 163, 184, 0.18));
+  color: var(--text-muted);
+}
+
+.ego-breakdown-empty {
+  margin: 0;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.ego-breakdown-more {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-align: right;
 }

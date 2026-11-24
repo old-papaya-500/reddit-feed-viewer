@@ -1,5 +1,5 @@
 /**
- * Reddit Community Auditor - Frontend Estático
+ * Reddit Feed Viewer - Frontend Estático
  * Desarrollado bajo las directrices de Google Chrome Modern Web Guidance
  */
 (function () {
@@ -239,7 +239,7 @@
     } else {
       document.documentElement.setAttribute('data-style', val);
     }
-    localStorage.setItem('reddit_auditor_style_preset', val);
+    localStorage.setItem('reddit_feed_viewer_style_preset', val);
     stylePresetItems.forEach(item => {
       const active = item.dataset.stylePreset === val;
       item.classList.toggle('is-active', active);
@@ -248,7 +248,7 @@
   }
 
   function initTheme() {
-    const saved = localStorage.getItem('reddit_auditor_theme');
+    const saved = localStorage.getItem('reddit_feed_viewer_theme');
     let isDarkNow;
     if (saved) {
       document.documentElement.setAttribute('data-theme', saved);
@@ -264,14 +264,14 @@
         const next = (cur === 'dark') ? 'light' : (cur === 'light') ? 'dark'
           : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'light' : 'dark');
         document.documentElement.setAttribute('data-theme', next);
-        localStorage.setItem('reddit_auditor_theme', next);
+        localStorage.setItem('reddit_feed_viewer_theme', next);
         updateThemeToggleUI(next === 'dark');
         closeVisualMenu();
       });
     }
 
     // Selector de paletas y tipografías (Original, Editorial, OSINT, Nordic)
-    const savedStyle = localStorage.getItem('reddit_auditor_style_preset') || 'default';
+    const savedStyle = localStorage.getItem('reddit_feed_viewer_style_preset') || 'default';
     applyStylePreset(savedStyle);
 
     stylePresetItems.forEach(item => {
@@ -316,14 +316,14 @@
   }
 
   function initOfflineMode() {
-    const saved = localStorage.getItem('reddit_auditor_strict_offline');
+    const saved = localStorage.getItem('reddit_feed_viewer_strict_offline');
     strictOfflineMode = saved === 'true';
     updateOfflineButtonUI();
 
     if (offlineToggle) {
       offlineToggle.addEventListener('click', () => {
         strictOfflineMode = !strictOfflineMode;
-        localStorage.setItem('reddit_auditor_strict_offline', strictOfflineMode ? 'true' : 'false');
+        localStorage.setItem('reddit_feed_viewer_strict_offline', strictOfflineMode ? 'true' : 'false');
         updateOfflineButtonUI();
 
         // Si el modal de detalle está abierto, refrescar su contenido con el nuevo modo
@@ -378,15 +378,28 @@
   }
   backBtn.addEventListener('click', () => showView(previousView));
 
+  let profileOriginBeforeGraph = 'feed';
   if (profileOpenGraphBtn) {
     profileOpenGraphBtn.addEventListener('click', () => {
       if (!selectedProfile || !selectedProfile.usuario) return;
+      profileOriginBeforeGraph = (previousView === 'ranking') ? 'ranking' : 'feed';
       previousView = 'graph';
       showView('graph', { skipAutoGraphBuild: true });
       if (window.RedditGraphController) {
         window.RedditGraphController.openEgoForUser(selectedProfile.usuario, { egoOnly: true });
       }
     });
+  }
+
+  function returnToUserProfileFromGraph(username) {
+    const targetName = username || (selectedProfile && selectedProfile.usuario) || '';
+    const profile = targetName ? userProfileMap.get(targetName.toLowerCase()) : selectedProfile;
+    if (profile) {
+      previousView = profileOriginBeforeGraph || 'feed';
+      selectUser(profile);
+    } else {
+      showView('feed');
+    }
   }
 
   // =========================================================================
@@ -795,6 +808,40 @@
   // =========================================================================
   let searchDebounceTimer = null;
   let activeTitleQuery = '';
+  const OMNIBOX_RECENT_KEY = 'reddit_feed_viewer_omnibox_recent';
+  const OMNIBOX_RECENT_MAX = 5;
+
+  function loadRecentSearches() {
+    try {
+      const raw = localStorage.getItem(OMNIBOX_RECENT_KEY);
+      if (!raw) return [];
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) return [];
+      return arr
+        .filter(item => item && (item.type === 'title' || item.type === 'user') && typeof item.value === 'string' && item.value.trim())
+        .slice(0, OMNIBOX_RECENT_MAX);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function saveRecentSearch(type, value) {
+    const clean = String(value || '').trim();
+    if (!clean || (type !== 'title' && type !== 'user')) return;
+    const current = loadRecentSearches();
+    const normLower = clean.toLowerCase();
+    const filtered = current.filter(item => !(item.type === type && item.value.toLowerCase() === normLower));
+    filtered.unshift({ type, value: clean });
+    try {
+      localStorage.setItem(OMNIBOX_RECENT_KEY, JSON.stringify(filtered.slice(0, OMNIBOX_RECENT_MAX)));
+    } catch (_) {}
+  }
+
+  function clearRecentSearches() {
+    try {
+      localStorage.removeItem(OMNIBOX_RECENT_KEY);
+    } catch (_) {}
+  }
 
   function updateActiveSearchChipUI() {
     if (!feedActiveSearchChip || !feedActiveSearchLabel) return;
@@ -808,6 +855,9 @@
 
   function applyTitleFilter(rawQuery) {
     activeTitleQuery = String(rawQuery || '').trim();
+    if (activeTitleQuery) {
+      saveRecentSearch('title', activeTitleQuery);
+    }
     if (headerUserSearch) headerUserSearch.value = activeTitleQuery;
     if (headerSearchClearBtn) headerSearchClearBtn.classList.toggle('hidden', !activeTitleQuery);
     if (headerSearchDropdown) headerSearchDropdown.classList.add('hidden');
@@ -858,6 +908,7 @@
         const cleanU = raw.replace(/^u\//i, '').toLowerCase();
         const matches = getMatchingUsersForOmnibox(cleanU);
         if (matches.length > 0) {
+          saveRecentSearch('user', matches[0].usuario);
           headerSearchDropdown.classList.add('hidden');
           headerUserSearch.value = '';
           if (headerSearchClearBtn) headerSearchClearBtn.classList.add('hidden');
@@ -899,8 +950,78 @@
     const raw = headerUserSearch.value.trim();
     headerSearchDropdown.innerHTML = '';
 
-    if (!raw || (allProfiles.length === 0 && postById.size === 0)) {
+    if (allProfiles.length === 0 && postById.size === 0) {
       headerSearchDropdown.classList.add('hidden');
+      return;
+    }
+
+    // Estado vacío: mostrar historial de últimos 5 buscados recientemente + botón Borrar historial
+    if (!raw) {
+      const recents = loadRecentSearches();
+      if (recents.length === 0) {
+        headerSearchDropdown.classList.add('hidden');
+        return;
+      }
+
+      const headerRow = document.createElement('div');
+      headerRow.className = 'dropdown-section-header';
+      headerRow.innerHTML = `
+        <span class="dropdown-section-label">🕒 Buscados recientemente</span>
+        <button type="button" id="omniboxClearHistoryBtn" class="dropdown-clear-history-btn">Borrar historial</button>
+      `;
+      const clearBtn = headerRow.querySelector('#omniboxClearHistoryBtn');
+      if (clearBtn) {
+        clearBtn.addEventListener('click', e => {
+          e.stopPropagation();
+          clearRecentSearches();
+          headerSearchDropdown.classList.add('hidden');
+        });
+      }
+      headerSearchDropdown.appendChild(headerRow);
+
+      recents.forEach(entry => {
+        const row = document.createElement('div');
+        row.className = 'dropdown-item dropdown-recent-item';
+        row.tabIndex = 0;
+        row.setAttribute('role', 'option');
+        if (entry.type === 'user') {
+          row.innerHTML = `
+            <div class="dropdown-avatar">${(entry.value[0] || 'U').toUpperCase()}</div>
+            <div class="dropdown-info">
+              <span class="dropdown-username">u/${escapeHtml(entry.value)}</span>
+              <span class="dropdown-meta">Perfil de usuario</span>
+            </div>
+            <span class="dropdown-recent-tag">Usuario</span>
+          `;
+        } else {
+          row.innerHTML = `
+            <div class="dropdown-recent-icon" aria-hidden="true">📝</div>
+            <div class="dropdown-info">
+              <span class="dropdown-username">"${escapeHtml(entry.value)}"</span>
+              <span class="dropdown-meta">Búsqueda por título en Feed</span>
+            </div>
+            <span class="dropdown-recent-tag">Título</span>
+          `;
+        }
+        const runRecent = () => {
+          headerSearchDropdown.classList.add('hidden');
+          if (entry.type === 'user') {
+            saveRecentSearch('user', entry.value);
+            headerUserSearch.value = activeTitleQuery || '';
+            if (headerSearchClearBtn) headerSearchClearBtn.classList.toggle('hidden', !activeTitleQuery);
+            navigateToUserProfile(entry.value);
+          } else {
+            applyTitleFilter(entry.value);
+          }
+        };
+        row.addEventListener('click', runRecent);
+        row.addEventListener('keydown', e => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); runRecent(); }
+        });
+        headerSearchDropdown.appendChild(row);
+      });
+
+      headerSearchDropdown.classList.remove('hidden');
       return;
     }
 
@@ -963,6 +1084,7 @@
         </div>
       `;
       const go = () => {
+        saveRecentSearch('user', p.usuario);
         headerSearchDropdown.classList.add('hidden');
         headerUserSearch.value = activeTitleQuery || '';
         if (headerSearchClearBtn) headerSearchClearBtn.classList.toggle('hidden', !activeTitleQuery);
@@ -2542,7 +2664,7 @@
   // =========================================================================
   // 15. API interna para módulos complementarios (graph.js) e Inicio
   // =========================================================================
-  window.RedditAuditorAPI = {
+  window.RedditFeedViewerAPI = {
     getData: () => ({
       allProfiles,
       availableSubreddits,
@@ -2550,7 +2672,8 @@
       postById,
       commentsByPostId
     }),
-    navigateToUserProfile
+    navigateToUserProfile,
+    returnToUserProfileFromGraph
   };
 
   initTheme();
