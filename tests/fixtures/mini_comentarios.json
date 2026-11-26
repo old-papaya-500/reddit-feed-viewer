@@ -1,0 +1,75 @@
+[
+  {
+    "post_id": "p001",
+    "post_title": "Dólar hoy y análisis económico enero 2026",
+    "post_selftext": "Este es un post de texto de prueba sobre economía argentina.",
+    "post_permalink": "https://www.reddit.com/r/argentina/comments/p001/dolar_hoy/",
+    "post_date_utc": 1767366000,
+    "post_date_art": "02/01/2026, 12:00 p. m.",
+    "post_author": "alice",
+    "num_comments_declarados": 8,
+    "comments_obtenidos": 8,
+    "comments": [
+      { "id": "c001", "parent_id": "t3_p001", "depth": 0, "author": "bob", "score": 12, "created_utc": 1767366600, "date_art": "02/01/2026, 12:10 p. m.", "body": "Muy buen análisis, coincido totalmente.", "permalink": "https://www.reddit.com/r/argentina/comments/p001/comment/c001/" },
+      { "id": "c002", "parent_id": "t1_c001", "depth": 1, "author": "alice", "score": 9, "created_utc": 1767367200, "date_art": "02/01/2026, 12:20 p. m.", "body": "Gracias bob! Sumo un dato extra.", "permalink": "https://www.reddit.com/r/argentina/comments/p001/comment/c002/" },
+      { "id": "c003", "parent_id": "t1_c002", "depth": 2, "author": "bob", "score": 8, "created_utc": 1767367800, "date_art": "02/01/2026, 12:30 p. m.", "body": "Excelente aporte.", "permalink": "https://www.reddit.com/r/argentina/comments/p001/comment/c003/" },
+      { "id": "c004", "parent_id": "t1_c003", "depth": 3, "author": "alice", "score": 6, "created_utc": 1767368400, "date_art": "02/01/2026, 12:40 p. m.", "body": "Totalmente de acuerdo.", "permalink": "https://www.reddit.com/r/argentina/comments/p001/comment/c004/" },
+      { "id": "c005", "parent_id": "t3_p001", "depth": 0, "author": "carol", "score": -4, "created_utc": 1767369000, "date_art": "02/01/2026, 12:50 p. m.", "body": "No estoy de acuerdo para nada con esto.", "permalink": "https://www.reddit.com/r/argentina/comments/p001/comment/c005/" },
+      { "id": "c006", "parent_id": "t3_p001", "depth": 0, "author": "dave", "score": 3, "created_utc": 1767369600, "date_art": "02/01/2026, 01:00 p. m.", "body": "Co-participación silenciosa hilo 1 (dave).", "permalink": "https://www.reddit.com/r/argentina/comments/p001/comment/c006/" },
+      { "id": "c007", "parent_id": "t3_p001", "depth": 0, "author": "eve", "score": 3, "created_utc": 1767370200, "date_art": "02/01/2026, 01:10 p. m.", "body": "Co-participación silenciosa hilo 1 (eve).", "permalink": "https://www.reddit.com/r/argentina/comments/p001/comment/c007/" },
+      { "id": "c008", "parent_id": "t3_p001", "depth": 0, "author": "Robo-TINA", "score": 1, "created_utc": 1767370800, "date_art": "02/01/2026, 01:20 p. m.", "body": "Resumen automático de noticia.", "permalink": "https://www.reddit.com/r/argentina/comments/p001/comment/c008/" }
+    ]
+  },
+  {
+    "post_id": "p002",
+    "post_title": "Foto del atardecer en Buenos Aires",
+    "post_selftext": "",
+    "post_permalink": "https://www.reddit.com/r/argentina/comments/p002/atardecer/",
+    "post_date_utc": 1767628800,
+    "post_date_art": "05/01/2026, 01:00 p. m.",
+    "post_author": "bob",
+    "num_comments_declarados": 6,
+    "comments_obtenidos": 6,
+    "comments": [
+      { "id": "c009", "parent_id": "t3_p002", "depth": 0, "author": "alice", "score": 7, "created_utc": 1767629400, "date_art": "05/01/2026, 01:10 p. m.", "body": "Tremenda foto!", "media_urls": ["https://i.redd.it/comment_img_1.jpg"], "permalink": "https://www.reddit.com/r/argentina/comments/p002/comment/c009/" },
+      { "id": "c010", "parent_id": "t3_p002", "depth": 0, "author": "dave", "score": 2, "created_utc": 1767630000, "date_art": "05/01/2026, 01:20 p. m.", "body": "Co-participación silenciosa hilo 2 (dave).", "permalink": "https://www.reddit.com/r/argentina/comments/p002/comment/c010/" },
+      { "id": "c011", "parent_id": "t3_p002", "depth": 0, "author": "eve", "score": 2, "created_utc": 1767630600, "date_art": "05/01/2026, 01:30 p. m.", "body": "Co-participación silenciosa hilo 2 (eve).", "permalink": "https://www.reddit.com/r/argentina/comments/p002/comment/c011/" },
+      { "id": "c012", "parent_id": "t3_p002", "depth": 0, "author": "CanillitaBot", "score": 1, "created_utc": 1767631200, "date_art": "05/01/2026, 01:40 p. m.", "body": "Bot utilitario que debe excluirse del grafo.", "permalink": "https://www.reddit.com/r/argentina/comments/p002/comment/c012/" },
+      { "id": "c013", "parent_id": "t3_p002", "depth": 0, "author": "[deleted]", "score": 1, "created_utc": 1767631800, "date_art": "05/01/2026, 01:50 p. m.", "body": "[removed]", "permalink": "https://www.reddit.com/r/argentina/comments/p002/comment/c013/" },
+      { "id": "c014", "parent_id": "t1_c013", "depth": 1, "author": "carol", "score": 2, "created_utc": 1767632400, "date_art": "05/01/2026, 02:00 p. m.", "lite": true, "permalink": "https://www.reddit.com/r/argentina/comments/p002/comment/c014/" }
+    ]
+  },
+  {
+    "post_id": "p003",
+    "post_title": "Consulta sobre alquileres en CABA",
+    "post_selftext": "¿Qué barrios recomiendan para alquilar en 2026?",
+    "post_permalink": "https://www.reddit.com/r/AskArgentina/comments/p003/alquileres/",
+    "post_date_utc": 1768060800,
+    "post_date_art": "10/01/2026, 01:00 p. m.",
+    "post_author": "carol",
+    "num_comments_declarados": 4,
+    "comments_obtenidos": 4,
+    "comments": [
+      { "id": "c015", "parent_id": "t3_p003", "depth": 0, "author": "dave", "score": 5, "created_utc": 1768061400, "date_art": "10/01/2026, 01:10 p. m.", "body": "Co-participación silenciosa hilo 3 (dave).", "permalink": "https://www.reddit.com/r/AskArgentina/comments/p003/comment/c015/" },
+      { "id": "c016", "parent_id": "t3_p003", "depth": 0, "author": "eve", "score": 4, "created_utc": 1768062000, "date_art": "10/01/2026, 01:20 p. m.", "body": "Co-participación silenciosa hilo 3 (eve).", "permalink": "https://www.reddit.com/r/AskArgentina/comments/p003/comment/c016/" },
+      { "id": "c017", "parent_id": "t3_p003", "depth": 0, "author": "AutoModerator", "score": 1, "created_utc": 1768062600, "date_art": "10/01/2026, 01:30 p. m.", "body": "Recordatorio de reglas del sub.", "permalink": "https://www.reddit.com/r/AskArgentina/comments/p003/comment/c017/" },
+      { "id": "c018", "parent_id": "t1_c008", "depth": 1, "author": "carol", "score": 1, "created_utc": 1768063200, "date_art": "10/01/2026, 01:40 p. m.", "body": "Good bot", "permalink": "https://www.reddit.com/r/AskArgentina/comments/p003/comment/c018/" }
+    ]
+  },
+  {
+    "post_id": "p005",
+    "post_title": "Debate sobre transporte público en febrero",
+    "post_selftext": "Comparativa de colectivos y subte.",
+    "post_permalink": "https://www.reddit.com/r/AskArgentina/comments/p005/transporte/",
+    "post_date_utc": 1770048000,
+    "post_date_art": "02/02/2026, 01:00 p. m.",
+    "post_author": "alice",
+    "num_comments_declarados": 3,
+    "comments_obtenidos": 3,
+    "comments": [
+      { "id": "c019", "parent_id": "t3_p005", "depth": 0, "author": "bob", "score": 6, "created_utc": 1770048600, "date_art": "02/02/2026, 01:10 p. m.", "body": "El subte suele ser más rápido.", "permalink": "https://www.reddit.com/r/AskArgentina/comments/p005/comment/c019/" },
+      { "id": "c020", "parent_id": "t1_c019", "depth": 1, "author": "alice", "score": 5, "created_utc": 1770049200, "date_art": "02/02/2026, 01:20 p. m.", "body": "Sí, en hora pico hace la diferencia.", "permalink": "https://www.reddit.com/r/AskArgentina/comments/p005/comment/c020/" },
+      { "id": "c021", "parent_id": "t3_p005", "depth": 0, "author": "carol", "score": -2, "created_utc": 1770049800, "date_art": "02/02/2026, 01:30 p. m.", "body": "Siempre anda mal.", "permalink": "https://www.reddit.com/r/AskArgentina/comments/p005/comment/c021/" }
+    ]
+  }
+]

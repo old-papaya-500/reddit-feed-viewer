@@ -1,6 +1,6 @@
 # Reddit Archiver & Feed Viewer (Public Edition)
 
-Herramientas livianas en **Node.js puro** y **HTML5/JS estático** (cero dependencias externas) para buscar publicaciones de Reddit por rango de fechas, extraer árboles completos de comentarios y explorarlos en un visor web offline tipo Feed.
+Herramientas livianas en **Node.js puro** y **HTML5/JS estático** (cero dependencias externas) para buscar publicaciones de Reddit por rango de fechas, extraer árboles completos de comentarios y explorarlos en un visor web offline tipo Feed y Perfiles.
 
 ---
 
@@ -20,7 +20,7 @@ Herramientas livianas en **Node.js puro** y **HTML5/JS estático** (cero depende
         ↓
 3. [consolidar_perfiles.js]   --> resultados/consolidados/perfiles_YYYYMMDD_HHMMSS/perfiles_usuarios.json
         ↓
-4. [viewer/index.html]        --> Visor Web Offline (Feed, búsqueda por título y árboles de comentarios)
+4. [viewer/index.html]        --> Visor Web Offline (Feed, búsqueda por título, perfiles y árboles de comentarios)
 ```
 
 ---
@@ -76,9 +76,30 @@ node validar_json.js resultados/consolidados/<carpeta>/perfiles_usuarios.json
 Abrí `viewer/index.html` directamente en tu navegador (doble clic, sin servidor):
 
 - **Carga Streaming + Modal de progreso:** soporta archivos JSON grandes sin congelar la interfaz. Menú **`📁 Archivos ▾`** unificado (*Cargar JSON* + *Vaciar memoria*).
-- **Configurador Amplio `🗂️ Armar Feed` + Feed Centrado:** modal inicial en 2 pasos (cargar JSON → elegir comunidades, fechas ART y orden inicial), reabrible en cualquier momento desde **`⚙️ Armar Feed`**. Feed centrado al 90% del ancho con **barra de reordenamiento instantáneo** (`Fecha descendente`, `Fecha ascendente`, `Mayor score`) e **indicador flotante de Mes y Año al scrollear**.
+- **Configurador Amplio `🗂️ Armar Feed` + Feed Centrado:** modal inicial en 2 pasos (cargar JSON → elegir comunidades, fechas ART y orden inicial), reabrible en cualquier momento desde **`⚙️ Armar Feed`**, con botón **`❓ Cómo generar el JSON`** para consultar los comandos CLI paso a paso. Feed centrado al 90% del ancho con **barra de reordenamiento instantáneo** (`Fecha descendente`, `Fecha ascendente`, `Mayor score`) e **indicador flotante de Mes y Año al scrollear**.
+- **Sistema de Ayuda Contextual (`❓ Ayuda`):** botón global en el header que abre automáticamente la guía de la pantalla activa (`Feed` o `Perfil de Usuario`) en un modal reutilizable con acordeones, botones `Expandir todo` / `Contraer todo` y bloques de código copiables.
 - **Omnibox Unificado (`🔍 Buscar post o usuario...`):** buscá posts por título (`Enter`, con chip removible y resaltado `<mark>`) o saltá directo al perfil de cualquier usuario activo (también con prefijo `u/`), con historial de los **últimos 5 buscados recientemente** y botón **`Borrar historial`**.
-- **Vista de Perfil de Usuario:** métricas individuales, filtro *multiple-choice* por subreddit, barra de reordenamiento y línea de tiempo filtrable por Posts / Comentarios.
+- **Vista de Perfil de Usuario y Preservación de Scroll:** métricas individuales (KPIs), filtro *multiple-choice* por subreddit, barra de reordenamiento, línea de tiempo filtrable por Posts / Comentarios y botón **`← Volver al Feed`** que restaura tu posición exacta de scroll.
 - **Árbol de Comentarios Reconstruido:** al abrir cualquier publicación reconstruye el hilo completo con respuestas anidadas (incluyendo contenido `[deleted]` sin romper la jerarquía e hidratación bajo demanda para datasets `--lite` cuando *Offline* está en OFF).
 - **Modo Offline Estricto (`Offline: ON/OFF`):** evita cualquier petición externa a Internet.
-- **Menú `🎨 Apariencia ▾`:** 4 estilos visuales (`Original`, `Editorial`, `OSINT`, `Nordic`) + modo Claro / Oscuro.
+- **Header Responsivo y Menú `🎨 Apariencia ▾`:** 4 estilos visuales (`Original`, `Editorial`, `OSINT`, `Nordic`), modo Claro / Oscuro y adaptación fluida en pantallas de escritorio, tablet y móvil.
+
+---
+
+## 📚 Documentación
+
+- **[`Documentation/GUIA_FEED.md`](Documentation/GUIA_FEED.md):** guía detallada del Header, Omnibox, `Armar Feed`, modo Offline, píldora de fecha y árboles de comentarios.
+- **[`Documentation/GUIA_PERFILES.md`](Documentation/GUIA_PERFILES.md):** guía de la ficha de Perfil de Usuario, filtro *multiple-choice* por subreddit, KPIs y trazabilidad de respuestas.
+- **[`CHANGELOG.md`](CHANGELOG.md):** historial de versiones y novedades del proyecto.
+
+---
+
+## 🧪 Pruebas Automatizadas y CI
+
+La suite corre en **Node.js puro** (cero dependencias) y se ejecuta automáticamente en **GitHub Actions** (`.github/workflows/ci.yml`) sobre Node.js 20, 22 y 24:
+
+```bash
+node tests/run_all_tests.js
+```
+
+Valida sintaxis de todos los scripts `.js`, el pipeline completo de consolidación con fixtures sintéticos (`tests/fixtures/`), la integridad de IDs DOM de `viewer/app.js` y `viewer/faq.js`, los flujos de Feed/Perfil/Omnibox/scroll y las secciones contextuales de ayuda.

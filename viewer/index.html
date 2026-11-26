@@ -22,7 +22,7 @@
 
     <!-- Tabs de navegación -->
     <nav class="nav-tabs" aria-label="Secciones principales">
-      <button type="button" id="tabFeed" class="nav-tab active">🗂️ Feed</button>
+      <button type="button" id="tabFeed" class="nav-tab active" aria-current="page">🗂️ Feed</button>
     </nav>
 
     <!-- Buscador de usuario (siempre visible arriba a la derecha) -->
@@ -126,6 +126,16 @@
           </button>
         </div>
       </div>
+
+      <button
+        type="button"
+        id="headerHelpBtn"
+        class="btn btn-secondary header-help-btn"
+        aria-label="Abrir guía de ayuda de la sección activa"
+      >
+        <span aria-hidden="true">❓</span>
+        <span>Ayuda</span>
+      </button>
     </div>
   </header>
 
@@ -152,7 +162,7 @@
             <div class="feed-empty-icon">🗂️</div>
             <h2>Armá tu feed personalizado</h2>
             <p>Cargá un archivo <code>perfiles_usuarios.json</code>, elegí comunidades, fechas o palabras clave y presioná <strong>▶ Generar Feed</strong>.</p>
-            <div style="margin-top:1.25rem;display:flex;gap:0.65rem;justify-content:center;flex-wrap:wrap;">
+            <div class="feed-empty-actions">
               <button type="button" id="emptyOpenBuilderBtn" class="btn btn-primary">⚙️ Abrir Armar Feed</button>
             </div>
           </div>
@@ -205,7 +215,7 @@
         <header class="user-hero-card">
           <div class="user-hero-main">
             <div class="avatar" id="userAvatar">U</div>
-            <div class="user-hero-titles" style="flex:1;">
+            <div class="user-hero-titles">
               <div class="username-row">
                 <h2 id="userName">u/usuario</h2>
                 <a id="redditProfileLink" href="#" target="_blank" rel="noopener noreferrer" class="external-link">
@@ -215,7 +225,7 @@
               <p class="user-activity-dates" id="userDates">Actividad registrada: - hasta -</p>
             </div>
             <div class="profile-sub-filter-box">
-              <span class="profile-sub-filter-label">Filtrar perfil por subreddit:</span>
+              <span>Filtrar perfil por subreddit:</span>
               <div class="multi-select-wrap" id="profileSubMultiWrap">
                 <button type="button" id="profileSubMultiBtn" class="multi-select-btn" aria-expanded="false" aria-haspopup="listbox">
                   <span id="profileSubMultiLabel">Todos los subreddits</span>
@@ -356,9 +366,14 @@
           <p id="feedBuilderFileHint" class="feed-builder-filehint">Seleccioná un archivo <code>perfiles_usuarios.json</code> para desbloquear los filtros.</p>
         </div>
       </div>
-      <button type="button" id="feedBuilderUploadBtn" class="btn btn-primary">
-        📂 Cargar JSON
-      </button>
+      <div class="feed-builder-fileactions">
+        <button type="button" id="feedBuilderFaqBtn" class="btn btn-secondary" data-faq-section="scraping">
+          ❓ Cómo generar el JSON
+        </button>
+        <button type="button" id="feedBuilderUploadBtn" class="btn btn-primary">
+          📂 Cargar JSON
+        </button>
+      </div>
     </div>
 
     <!-- Paso 2: Formulario de filtros (grisado/deshabilitado hasta cargar JSON) -->
@@ -370,7 +385,7 @@
 
       <div class="feed-builder-grid">
         <!-- Columna Izquierda: Comunidades -->
-        <div class="feed-builder-col">
+        <div>
           <div class="sidebar-block-header">
             <h4 class="sidebar-block-label">Comunidades</h4>
             <div class="sidebar-block-actions">
@@ -385,7 +400,7 @@
         </div>
 
         <!-- Columna Derecha: Fechas y Orden -->
-        <div class="feed-builder-col feed-builder-col-right">
+        <div class="feed-builder-col-right">
           <div>
             <h4 class="sidebar-block-label">Rango de fechas (ART)</h4>
             <div class="date-range-fields">
@@ -425,6 +440,41 @@
     </div>
   </dialog>
 
+  <!-- Modal Reutilizable de Preguntas Frecuentes e Instructivos (FAQ) -->
+  <dialog id="faqDialog" class="faq-dialog" closedby="any" aria-labelledby="faqDialogTitle">
+    <div class="faq-dialog-header">
+      <div class="faq-dialog-title-group">
+        <span id="faqDialogBadge" class="faq-dialog-badge">Ayuda e Instructivo</span>
+        <h2 id="faqDialogTitle">❓ Preguntas Frecuentes</h2>
+        <p id="faqDialogSubtitle" class="faq-dialog-subtitle"></p>
+      </div>
+      <button type="button" class="btn-close" id="faqDialogCloseBtn" aria-label="Cerrar instructivo">✕</button>
+    </div>
+
+    <div class="faq-dialog-toolbar">
+      <div class="faq-dialog-toolbar-meta">
+        <span id="faqDialogCount" class="faq-dialog-count"></span>
+        <span id="faqDialogDocRef" class="faq-dialog-doc-ref hidden"></span>
+      </div>
+      <button type="button" id="faqToggleAllBtn" class="btn btn-secondary faq-toggle-all-btn" aria-expanded="false">
+        <span class="faq-label-expand">▾ Expandir todo</span>
+        <span class="faq-label-collapse">▴ Contraer todo</span>
+      </button>
+    </div>
+
+    <div id="faqDialogBody" class="faq-dialog-body">
+      <div id="faqDialogIntro" class="faq-intro-callout hidden"></div>
+      <section id="faqAccordionSection" class="faq-accordion" aria-labelledby="faqDialogTitle"></section>
+    </div>
+
+    <div class="faq-dialog-footer">
+      <span class="faq-footer-hint">Presioná <kbd>Esc</kbd> o hacé clic fuera de la ventana para volver.</span>
+      <form method="dialog">
+        <button value="close" class="btn btn-primary">Entendido</button>
+      </form>
+    </div>
+  </dialog>
+
   <!-- Modal de Loading Global (no bloqueante, con barra de progreso en tiempo real) -->
   <dialog id="loadingDialog" class="loading-dialog" aria-labelledby="loadingTitle" aria-live="polite">
     <div class="loading-modal-content">
@@ -439,5 +489,6 @@
   </dialog>
 
   <script src="app.js"></script>
+  <script src="faq.js"></script>
 </body>
 </html>

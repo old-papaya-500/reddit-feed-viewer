@@ -2,6 +2,7 @@
 resultados/
 descargas/
 *.json
+!tests/fixtures/*.json
 *.jsonl
 *.csv
 

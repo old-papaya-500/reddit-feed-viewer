@@ -1,0 +1,80 @@
+[
+  {
+    "id": "p001",
+    "title": "Dólar hoy y análisis económico enero 2026",
+    "author": "alice",
+    "created_utc": 1767366000,
+    "date_art": "02/01/2026, 12:00 p. m.",
+    "flair": "Economía",
+    "score": 45,
+    "num_comments": 5,
+    "permalink": "https://www.reddit.com/r/argentina/comments/p001/dolar_hoy/",
+    "url": "https://www.reddit.com/r/argentina/comments/p001/dolar_hoy/",
+    "selftext": "Este es un post de texto de prueba sobre economía argentina."
+  },
+  {
+    "id": "p002",
+    "title": "Foto del atardecer en Buenos Aires",
+    "author": "bob",
+    "created_utc": 1767628800,
+    "date_art": "05/01/2026, 01:00 p. m.",
+    "flair": "OC",
+    "score": 120,
+    "num_comments": 4,
+    "permalink": "https://www.reddit.com/r/argentina/comments/p002/atardecer/",
+    "url": "https://i.redd.it/test_sunset.jpg",
+    "selftext": ""
+  },
+  {
+    "id": "p003",
+    "title": "Consulta sobre alquileres en CABA",
+    "author": "carol",
+    "created_utc": 1768060800,
+    "date_art": "10/01/2026, 01:00 p. m.",
+    "flair": "Serio",
+    "score": 18,
+    "num_comments": 3,
+    "permalink": "https://www.reddit.com/r/AskArgentina/comments/p003/alquileres/",
+    "url": "https://www.reddit.com/r/AskArgentina/comments/p003/alquileres/",
+    "selftext": "¿Qué barrios recomiendan para alquilar en 2026?"
+  },
+  {
+    "id": "p004",
+    "title": "Video de música callejera en San Telmo",
+    "author": "dave",
+    "created_utc": 1768492800,
+    "date_art": "15/01/2026, 01:00 p. m.",
+    "flair": "Cultura",
+    "score": 82,
+    "num_comments": 2,
+    "permalink": "https://www.reddit.com/r/argentina/comments/p004/musica/",
+    "url": "https://v.redd.it/test_video_123",
+    "selftext": ""
+  },
+  {
+    "id": "p005",
+    "title": "Debate sobre transporte público en febrero",
+    "author": "alice",
+    "created_utc": 1770048000,
+    "date_art": "02/02/2026, 01:00 p. m.",
+    "flair": "Debate",
+    "score": 31,
+    "num_comments": 4,
+    "permalink": "https://www.reddit.com/r/AskArgentina/comments/p005/transporte/",
+    "url": "https://www.reddit.com/r/AskArgentina/comments/p005/transporte/",
+    "selftext": "Comparativa de colectivos y subte."
+  },
+  {
+    "id": "p006",
+    "title": "Publicación de autor eliminado para test de contexto",
+    "author": "[deleted]",
+    "created_utc": 1770307200,
+    "date_art": "05/02/2026, 01:00 p. m.",
+    "flair": "General",
+    "score": 7,
+    "num_comments": 2,
+    "permalink": "https://www.reddit.com/r/argentina/comments/p006/deleted_post/",
+    "url": "https://www.reddit.com/r/argentina/comments/p006/deleted_post/",
+    "selftext": "Texto preservado de un post cuyo autor fue borrado."
+  }
+]

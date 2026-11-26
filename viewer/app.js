@@ -11,7 +11,9 @@
   let allProfiles = [];
   let availableSubreddits = new Set();
   let selectedProfile = null;
-  let previousView = 'feed'; // 'feed' o 'ranking'
+  let previousView = 'feed';
+  let currentView = 'feed';
+  const savedScrollByView = { feed: 0, profile: 0 };
 
   // Índices globales para búsquedas instantáneas en memoria
   const userProfileMap = new Map();   // username.toLowerCase() -> perfil
@@ -55,6 +57,7 @@
   const visualMenuBtn     = document.getElementById('visualMenuBtn');
   const visualMenuDropdown = document.getElementById('visualMenuDropdown');
   const stylePresetItems  = document.querySelectorAll('[data-style-preset]');
+  const headerHelpBtn     = document.getElementById('headerHelpBtn');
   const themeToggle       = document.getElementById('themeToggle');
   const themeIcon         = document.getElementById('themeIcon');
   const themeToggleLabel  = document.getElementById('themeToggleLabel');
@@ -281,6 +284,21 @@
       });
     });
 
+    function fitHeaderDropdownInViewport(dropdownEl) {
+      if (!dropdownEl || typeof dropdownEl.getBoundingClientRect !== 'function') return;
+      dropdownEl.style.left = '';
+      dropdownEl.style.right = '';
+      const rect = dropdownEl.getBoundingClientRect();
+      const vw = window.innerWidth || (document.documentElement && document.documentElement.clientWidth) || 1280;
+      if (rect.left < 8) {
+        dropdownEl.style.left = '0';
+        dropdownEl.style.right = 'auto';
+      } else if (rect.right > vw - 8) {
+        dropdownEl.style.left = 'auto';
+        dropdownEl.style.right = '0';
+      }
+    }
+
     if (visualMenuBtn && visualMenuDropdown) {
       visualMenuBtn.addEventListener('click', e => {
         e.stopPropagation();
@@ -288,6 +306,7 @@
         const willOpen = visualMenuDropdown.classList.contains('hidden');
         visualMenuDropdown.classList.toggle('hidden', !willOpen);
         visualMenuBtn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+        if (willOpen) fitHeaderDropdownInViewport(visualMenuDropdown);
       });
 
       document.addEventListener('click', e => {
@@ -338,6 +357,11 @@
   // 4. Navegación entre Secciones
   // =========================================================================
   function showView(name, opts = {}) {
+    if (currentView && currentView !== name) {
+      savedScrollByView[currentView] = window.scrollY || window.pageYOffset || 0;
+    }
+    currentView = name;
+
     document.body.classList.toggle('view-feed', name === 'feed');
     if (name !== 'feed') hideFeedScrollDatePill();
     sectionFeed.classList.add('hidden');
@@ -347,25 +371,43 @@
     tabFeed.classList.remove('active');
     if (tabRanking) tabRanking.classList.remove('active');
     if (tabGraph) tabGraph.classList.remove('active');
+    tabFeed.removeAttribute('aria-current');
+    if (tabRanking) tabRanking.removeAttribute('aria-current');
+    if (tabGraph) tabGraph.removeAttribute('aria-current');
 
     if (name === 'feed') {
       sectionFeed.classList.remove('hidden');
       tabFeed.classList.add('active');
+      tabFeed.setAttribute('aria-current', 'page');
     } else if (name === 'ranking' && sectionRanking) {
       sectionRanking.classList.remove('hidden');
-      if (tabRanking) tabRanking.classList.add('active');
+      if (tabRanking) {
+        tabRanking.classList.add('active');
+        tabRanking.setAttribute('aria-current', 'page');
+      }
       renderRankingList();
     } else if (name === 'graph' && sectionGraph) {
       sectionGraph.classList.remove('hidden');
-      if (tabGraph) tabGraph.classList.add('active');
+      if (tabGraph) {
+        tabGraph.classList.add('active');
+        tabGraph.setAttribute('aria-current', 'page');
+      }
       if (window.RedditGraphController && !opts.skipAutoGraphBuild) {
         window.RedditGraphController.onSectionVisible();
       }
     } else if (name === 'profile') {
       sectionProfile.classList.remove('hidden');
-      if (previousView === 'ranking' && sectionRanking) backBtnText.textContent = 'Volver al Ranking';
-      else if (previousView === 'graph' && sectionGraph) backBtnText.textContent = 'Volver al Grafo';
-      else backBtnText.textContent = 'Volver al Feed';
+      backBtnText.textContent = 'Volver al Feed';
+    }
+
+    if (opts.restoreScroll && savedScrollByView[name] > 0) {
+      const targetY = savedScrollByView[name];
+      window.scrollTo({ top: targetY, behavior: 'auto' });
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => window.scrollTo({ top: targetY, behavior: 'auto' }));
+      }
+    } else {
+      window.scrollTo({ top: 0, behavior: 'auto' });
     }
   }
 
@@ -376,7 +418,7 @@
   if (tabGraph) {
     tabGraph.addEventListener('click', () => { previousView = 'graph'; showView('graph'); });
   }
-  backBtn.addEventListener('click', () => showView(previousView));
+  backBtn.addEventListener('click', () => showView(previousView, { restoreScroll: true }));
 
   let profileOriginBeforeGraph = 'feed';
   if (profileOpenGraphBtn) {
@@ -793,9 +835,9 @@
       if (itemDialog && typeof itemDialog.close === 'function') {
         try { itemDialog.close(); } catch (_) {}
       }
-      if (sectionGraph && !sectionGraph.classList.contains('hidden')) previousView = 'graph';
-      else if (sectionRanking && !sectionRanking.classList.contains('hidden')) previousView = 'ranking';
-      else previousView = 'feed';
+      if (sectionProfile && !sectionProfile.classList.contains('hidden')) {
+        // Mantener el origen previo al saltar entre perfiles
+      } else previousView = 'feed';
       selectUser(profile);
     } else {
       // Si el usuario no está en el índice de perfiles, abrir enlace a Reddit
@@ -854,6 +896,7 @@
   }
 
   function applyTitleFilter(rawQuery) {
+    clearTimeout(searchDebounceTimer);
     activeTitleQuery = String(rawQuery || '').trim();
     if (activeTitleQuery) {
       saveRecentSearch('title', activeTitleQuery);
@@ -899,6 +942,8 @@
   headerUserSearch.addEventListener('keydown', e => {
     if (e.key === 'Enter') {
       e.preventDefault();
+      clearTimeout(searchDebounceTimer);
+      headerSearchDropdown.classList.add('hidden');
       const raw = headerUserSearch.value.trim();
       if (!raw) {
         if (activeTitleQuery) applyTitleFilter('');
@@ -918,12 +963,14 @@
       }
       applyTitleFilter(raw);
     } else if (e.key === 'Escape') {
+      clearTimeout(searchDebounceTimer);
       headerSearchDropdown.classList.add('hidden');
     }
   });
 
   if (headerSearchClearBtn) {
     headerSearchClearBtn.addEventListener('click', () => {
+      clearTimeout(searchDebounceTimer);
       if (headerUserSearch) headerUserSearch.value = '';
       headerSearchClearBtn.classList.add('hidden');
       headerSearchDropdown.classList.add('hidden');
@@ -1375,6 +1422,7 @@
 
     feedItems = postsList;
     feedPage  = 0;
+    savedScrollByView.feed = 0;
 
     feedItemCount.textContent = postsList.length.toLocaleString();
     feedCounterBadge.classList.remove('hidden');
@@ -2526,6 +2574,7 @@
     }
 
     applyProfileSubFilters();
+    window.scrollTo({ top: 0, behavior: 'auto' });
   }
 
   function renderUserTimeline() {
@@ -2661,8 +2710,24 @@
       .replace(/'/g, '&#39;');
   }
 
+  function resolveContextualFaqSection() {
+    if (currentView === 'profile') return 'profile';
+    return 'feed';
+  }
+
+  if (headerHelpBtn) {
+    headerHelpBtn.addEventListener('click', () => {
+      closeFilesMenu();
+      closeVisualMenu();
+      const targetSection = resolveContextualFaqSection();
+      if (window.RedditFaqController && typeof window.RedditFaqController.openFaq === 'function') {
+        window.RedditFaqController.openFaq(targetSection);
+      }
+    });
+  }
+
   // =========================================================================
-  // 15. API interna para módulos complementarios (graph.js) e Inicio
+  // 15. API interna e Inicio
   // =========================================================================
   window.RedditFeedViewerAPI = {
     getData: () => ({
@@ -2672,8 +2737,17 @@
       postById,
       commentsByPostId
     }),
+    getCurrentView: () => currentView,
+    resolveContextualFaqSection,
     navigateToUserProfile,
-    returnToUserProfileFromGraph
+    openPostDetail,
+    hydrateLiteComments,
+    isStrictOffline: () => strictOfflineMode,
+    openFaq: (sectionId = 'scraping') => {
+      if (window.RedditFaqController && typeof window.RedditFaqController.openFaq === 'function') {
+        window.RedditFaqController.openFaq(sectionId);
+      }
+    }
   };
 
   initTheme();
